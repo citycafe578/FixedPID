@@ -51,14 +51,13 @@ void setup()
     pid.setIntegralLimits(
         -5000,
         5000
-);
+    );
 }
 
 void loop()
 {
     int32_t target = 1000;
     int32_t input = 950;
-
     uint32_t dt_us = 1000;
 
     int32_t output = pid.update(
@@ -144,10 +143,7 @@ Kd = 0.05
 Limits the final PID output.
 
 ```cpp
-pid.setOutputLimits(
-    -1000,
-    1000
-);
+pid.setOutputLimits(-1000, 1000);
 ```
 
 ### `setIntegralLimits()`
@@ -155,10 +151,7 @@ pid.setOutputLimits(
 Limits the integral contribution.
 
 ```cpp
-pid.setIntegralLimits(
-    -500,
-    500
-);
+pid.setIntegralLimits(-500, 500);
 ```
 
 This can be used together with the built-in anti-windup behavior.
@@ -216,9 +209,7 @@ The controller conceptually follows:
 error = target - input
 
 P = Kp × error
-
 I = Ki × ∫error dt
-
 D = Kd × d(error)/dt
 ```
 
@@ -299,7 +290,6 @@ The controller has been tested with a dedicated test suite covering:
 * Extreme values
 * Long-running updates
 * Timestep jitter
-* Fixed-rate update equivalence
 
 Current test result:
 
@@ -307,11 +297,9 @@ Current test result:
 ========================================
              TEST RESULT
 ========================================
-
-Total : 42
-PASS  : 42
+Total : 40
+PASS  : 40
 FAIL  : 0
-
 ========================================
        ALL TESTS PASSED
 ========================================
@@ -321,33 +309,35 @@ FAIL  : 0
 
 ## Benchmark
 
-Benchmark results on an ESP32-C3 SuperMini at 160 MHz:
+Benchmark results on an ESP32-C3 SuperMini at 160 MHz.
+
+The following measurements are from the current `update()` implementation:
 
 ```text
-Original update()
+FixedPID
 
 P only   : 2.630 us / update
 PI       : 4.830 us / update
 Full PID : 4.830 us / update
 ```
 
-An optimized fixed-rate path was also tested:
+For reference, the same benchmark setup produced approximately:
 
 ```text
-Optimized updateFixedRate()
-
-P only   : 1.315 us / update
-PI       : 2.327 us / update
-Full PID : 2.327 us / update
+QuickPID  : 13.62 us / update
+AutoPID   : 18.74 us / update
 ```
 
-The optimized implementation produced identical results for the tested output set:
+Lower is better.
+
+In this benchmark, FixedPID was approximately:
 
 ```text
-PASS : 1000/1000 outputs identical
+2.8× faster than QuickPID
+3.9× faster than AutoPID
 ```
 
-These numbers are provided as reference measurements, not as a universal performance guarantee.
+These measurements are provided as reference results, not as a universal performance guarantee. Performance may vary depending on MCU, clock frequency, compiler, optimization settings, and controller configuration.
 
 ---
 
