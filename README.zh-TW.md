@@ -131,7 +131,7 @@ int32_t output = pid.updateFixedRate(target, input);
 | `setErrorDeadband(edb)`            | 忽略 ±deadband 範圍內的微小誤差，可降低接近目標值時由感測器雜訊造成的抖動。                                                                              |
 | `setErrorIntegralThreshold(eit)`   | 積分分離：只有當 `error` 的絕對值達到或超過此閾值時才累積積分，可避免大型暫態期間積分過度累積。                                                          |
 | `setDerivativeFilter(alpha)`       | 對 D 項套用低通濾波。alpha 越高，濾波效果越強，對雜訊的放大越低。                                                                                      |
-| `updateVelocity(...)`              | 使用可變時間步長的速度型 PID，對部分增量式與速率型致動器可能具有更平滑的控制特性。                                                                     |
+| `updateVelocity(...)`              | 使用可變時間頻率的速度型 PID，對部分增量式與速率型致動器可能具有更平滑的控制特性。                                                                     |
 | `updateVelocityFixedRate(...)`     | 使用固定頻率的速度型 PID。                                                                                                                             |
 
 ---
