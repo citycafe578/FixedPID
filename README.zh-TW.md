@@ -30,7 +30,7 @@ FixedPID 使用整數運算，並以 `int64_t` 作為中間計算型別，取代
 
 * 誤差死區（Error deadband）
 
-* 積分分離閾值（Integral separation threshold）
+* 積分閾值控制（Integral threshold control）
 
 * 微分低通濾波
 
@@ -129,7 +129,7 @@ int32_t output = pid.updateFixedRate(target, input);
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setFrequency(hz)`                 | 設定 `updateFixedRate` / `updateVelocityFixedRate` 使用的固定迴圈頻率，並預先計算 Ki/Kd 的時間縮放，以降低每次更新的運算成本。                         |
 | `setErrorDeadband(edb)`            | 忽略 ±deadband 範圍內的微小誤差，可降低接近目標值時由感測器雜訊造成的抖動。                                                                              |
-| `setErrorIntegralThreshold(eit)`   | 積分分離：只有當 `error` 的絕對值達到或超過此閾值時才累積積分，可避免大型暫態期間積分過度累積。                                                          |
+| `setErrorIntegralThreshold(eit)`   | 限制積分累積只發生在 `error` 的絕對值小於或等於此閾值時，讓積分作用集中在接近目標值的區域。                                                          |
 | `setDerivativeFilter(alpha)`       | 對 D 項套用低通濾波。alpha 越高，濾波效果越強，對雜訊的放大越低。                                                                                      |
 | `updateVelocity(...)`              | 使用可變時間頻率的速度型 PID，對部分增量式與速率型致動器可能具有更平滑的控制特性。                                                                     |
 | `updateVelocityFixedRate(...)`     | 使用固定頻率的速度型 PID。                                                                                                                             |
@@ -156,7 +156,13 @@ pid.setErrorDeadband(5);
 
 ### `setErrorIntegralThreshold(int32_t eit)`
 
-只有當誤差的絕對值達到或超過此閾值時，積分項才會累積。
+只有當誤差的絕對值小於或等於此閾值時，積分項才會累積：
+
+```text
+|error| <= threshold
+```
+
+這是接近目標值時才啟用積分的閾值控制，不是一般所稱的「積分分離」（在大誤差時停用積分）。
 
 ```cpp
 pid.setErrorIntegralThreshold(20);
@@ -342,33 +348,45 @@ FastPID 與其他整數型 PID 函式庫在 8-bit AVR 平台上仍具有其優�
 
 ---
 
-## Acknowledgments / Feedback from v0.1
+## Acknowledgments / Feedback from v0.2
 
-感謝所有嘗試過 v0.1 並在首版發布後提供回饋的各位。
+在前一版 v0.2 的實作與測試過程中，我發現了一些與整數運算、固定頻率計算以及測試覆蓋率相關的問題。
 
-**已採納的社群 (Arduino.Taipei) 建議：**
+主要問題包括：
 
-* **速度型 PID** — 新增 `updateVelocity()` 與 `updateVelocityFixedRate()`，以減少積分暴衝問題，並在某些場景下讓增益調整更平滑。
+* `PID_SCALE` 在 P / I / D 增益計算中的使用方式不正確
+* `setFrequency()` 存在潛在的除以零問題
+* 速度型積分項存在精度損失
+* 固定頻率微分計算存在精度損失
+* 儲存前一次誤差值時使用的整數寬度不足
+* `setErrorIntegralThreshold()` 的文件說明不一致
+* 部分 API 尚未有完整的功能測試覆蓋
 
-* **減少中間變數 / 更精簡的更新路徑** — 減少不必要的狀態並收緊 hot path 後，在效能回饋中獲得改善（尤其對 ESP32-C3 / RISC-V 具有關鍵影響）。
+以上問題目前都已完成修正，同時也擴充了相對應的測試。
 
-* **固定頻率高速路徑** — `setFrequency()` + `updateFixedRate()` 用於固定週期迴圈，降低每次運算成本。
+目前的測試套件除了基本功能之外，也增加了對以下邊界情況的測試：
 
-* **實用的調參輔助** — 誤差死區、積分分離閾值、微分低通濾波，用於處理雜訊感測器與真實控制迴圈。
+* 頻率上下限
+* 整數範圍極限
+* Error Deadband
+* Integral Threshold
+* Derivative Filter
+* 速度型積分的精度
+* 固定頻率計算
 
-* **更廣的測試** — 測試套件擴充至 73 個案例，包含固定頻率一致性與長時間抖動測試。
+前一版在測試與實際開發過程中發現的主要運算與實作問題，目前都已經完成修正。
 
-**本次未採納的建議 (以及原因)：**
+### 目前狀態
 
-* **2的次方 (`2^N`) 增益/時間縮放 + 僅用位移運算** — 速度上確實提升了非常多，但會破壞現有的 `PID_SCALE = 1000` / `TIME_SCALE = 1000000` API 以及所有現有的調參、文件與測試。視為未來可能的 breaking change，而非 v0.2 的小改動。
+目前 FixedPID 正在我的 **ESP32 無人機專案**上進行實際測試。
 
-* **極致的、針對特定架構的微優化 (在 C3 上小於 -1 µs)** — 原型路徑在 ESP32-C3 上已達到 <1 µs，但在其餘核心/處理器架構上並非明顯優勢。比起在單一 MCU 上的極限數字，我更偏好可攜性。
+我目前**暫時不會在這個版本中放入最終的 Library 檔案**。
 
-* **將延遲壓到 ~0.5 µs** — 對於常見的設備來說並無太多的需求；下一個優先事項是真實情況的測試，如實裝上無人機並評估飛行測試時的穩定性，而非進一步的優化。
+在正式發布更新後的 Library 檔案之前，我希望先將 FixedPID 實際整合至無人機的飛控系統中進行測試，確認 PID 在真實的飛行控制環境下能夠維持穩定且可靠的行為。
 
-**下一個重點**
+等到 FixedPID 在無人機上的實際測試完成後，我會再更新 Repository，加入最終版本的 Library 檔案以及完整文件。
 
-將 FixedPID 整合進我的開源無人機專案中進行飛行測試。如果在空中的表現穩定，將會以 Arduino 函式庫的形式發布供更廣泛使用。進一步的功能 (例如更強的 derivative-on-measurement 預設值、feed-forward、notch 相關輔助) 將在驗證之後才會加入。
+這將會是下一個正式版本發布前的最後驗證階段。
 
 ---
 

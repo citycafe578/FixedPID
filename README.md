@@ -462,33 +462,36 @@ Possible future work:
 
 ---
 
-## Acknowledgments / Feedback from v0.1
+## Acknowledgments / Feedback from v0.2
 
-Thank you to everyone who tried v0.1 and shared feedback after the first release.
+During the review of the previous v0.2 implementation, several issues were identified in the integer arithmetic, fixed-rate calculations, and test coverage.
 
-**Adopted from community  (Arduino.Taipei)  suggestions:**
+The main issues included:
 
-* **Velocity-form PID** — added `updateVelocity()` and `updateVelocityFixedRate()` to reduce integral blow-up issues and make gain changes smoother in some use cases.
+* Incorrect application of `PID_SCALE` in the P/I/D gain calculations
+* A potential divide-by-zero condition in `setFrequency()`
+* Loss of precision in the velocity-form integral term
+* Precision loss in fixed-rate derivative calculations
+* Insufficient integer width for storing previous error values
+* Inconsistent documentation for `setErrorIntegralThreshold()`
+* Several APIs that were not properly covered by functional tests
 
-* **Fewer intermediate variables / leaner update path** — reduced unnecessary state and tightened the hot path after performance feedback (especially relevant on ESP32-C3 / RISC-V).
+These issues have now been addressed, and the corresponding test coverage has also been expanded.
 
-* **Fixed-rate fast path** — `setFrequency()` + `updateFixedRate()` for constant-period loops with lower per-step cost.
+The main arithmetic and implementation issues identified during the previous review have been fixed. The test suite has also been expanded to cover edge cases such as frequency boundaries, integer limits, error deadbands, integral thresholds, derivative filtering, velocity-form integral precision, and fixed-rate calculations.
 
-* **Practical tuning helpers** — error deadband, integral separation threshold, and derivative low-pass filter for noisy sensors and real control loops.
+### Current Status
 
-* **Broader tests** — suite expanded to 73 cases (73/73 pass), including fixed-rate equivalence and longer jitter runs.
+The library is currently undergoing real-world testing on my ESP32-based drone project.
 
-**Considered but not taken in this release (and why):**
+I am intentionally **not including the final library files in this release yet**.
 
-* **Power-of-two (`2^N`) gain/time scales + shift-only math** — attractive for speed, but would break the current `PID_SCALE = 1000` / `TIME_SCALE = 1000000` API and all existing tuning/docs/tests. Treated as a possible future breaking change, not a quiet v0.2 tweak.
+Before publishing the updated library files, I want to verify the implementation on the actual flight controller and make sure that the PID behavior is stable and reliable under real operating conditions.
 
-* **Ultra-aggressive, architecture-specific micro-opts (sub-1 µs on C3)** — a prototype path reached under ~1 µs on ESP32-C3, but was not clearly a win on other cores/toolchains. Prefer portable behavior over peak numbers on one MCU.
+Once the FixedPID implementation has been validated on the drone, I will update the repository with the finalized library files and documentation.
 
-* **Pushing latency toward ~0.5 µs** — diminishing returns for typical flight-control rates; next priority is real airframe testing and stability, not further micro-optimization.
+This is the final validation stage before the next release.
 
-**Next focus**
-
-Integrate FixedPID into the author’s open drone stack for flight testing. If behavior is solid in the air, publish as an Arduino library for wider use. Further features (e.g. stronger derivative-on-measurement defaults, feed-forward, notch-oriented helpers) will follow validation, not the other way around.
 
 ---
 

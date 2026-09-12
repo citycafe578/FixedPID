@@ -26,7 +26,8 @@ class FixedPID{
 
     private:
         int32_t kp, ki, kd;
-        int32_t previousError;
+
+        int64_t previousError;
         int64_t integral;
 
         int32_t outputMin, outputMax;
@@ -34,22 +35,21 @@ class FixedPID{
 
         uint32_t dt_us;
 
+        uint32_t hz;
         int64_t derivativeScale;
 
         uint32_t errorDeadband;
         int32_t errIntegralThreshold;
 
-        static int64_t divideByTimeScale(int64_t value){
-            return value / TIME_SCALE;
-        }
-
         int64_t filterDerivative(int64_t rawD);
 
-        int32_t previousPreviousError;
+        int64_t previousPreviousError;
         int64_t velocityOutput;
 
         uint32_t alpha;
         int64_t previousFilteredD;
+
+        int64_t velocityIntegralRemainder;
 };
 
 #endif
