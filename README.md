@@ -27,7 +27,7 @@ FixedPID uses integer arithmetic with `int64_t` intermediate calculations instea
 
 ## Status
 
-**Version: v0.2**
+**Version: v0.2.1**
 
 This release improves performance, expands the API, and increases test coverage.
 
@@ -121,7 +121,7 @@ pid.setTunings(
 | `update(target, input, dt_us)`   | Perform a PID update using the supplied timestep                          |
 | `updateFixedRate(target, input)` | Perform a PID update using the configured fixed frequency                 |
 
-### New in v0.2
+### New in v0.2.1
 
 | Function                                 | Purpose                                                                                                                                                    |
 | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -340,7 +340,7 @@ This is useful when restarting a controller, changing operating conditions, or r
 
 ## Testing
 
-v0.2 includes an automated test suite covering functional behavior, edge cases, and fixed-rate operation.
+v0.2.1 includes an automated test suite covering functional behavior, edge cases, and fixed-rate operation.
 
 ```text
 ========================================
@@ -376,7 +376,7 @@ Platform: **Nologo ESP32-C3 SuperMini @ 160 MHz**
 
 Lower is better. Measurements represent the approximate execution time of one controller update.
 
-### FixedPID v0.2
+### FixedPID v0.2.1
 
 | Mode                               |       P only |           PI |     Full PID |
 | ---------------------------------- | -----------: | -----------: | -----------: |
@@ -390,8 +390,8 @@ Earlier measurements from the same class of platform and test setup:
 | Mode                 |     Full PID |
 | -------------------- | -----------: |
 | Previous `update()`  |     ~4.83 µs |
-| **v0.2 Variable-dt** | **~3.13 µs** |
-| **v0.2 Fixed-rate**  | **~2.15 µs** |
+| **v0.2.1 Variable-dt** | **~3.13 µs** |
+| **v0.2.1 Fixed-rate**  | **~2.15 µs** |
 
 Approximate improvement compared with the previous ~4.83 µs result:
 
@@ -408,8 +408,8 @@ Reference measurements from earlier ESP32-C3 comparisons:
 | ----------------------------- | --------------------: |
 | QuickPID                      |             ~13.62 µs |
 | AutoPID (r-downing)           |             ~18.74 µs |
-| **FixedPID v0.2 Variable-dt** |          **~3.13 µs** |
-| **FixedPID v0.2 Fixed-rate**  |          **~2.15 µs** |
+| **FixedPID v0.2.1 Variable-dt** |          **~3.13 µs** |
+| **FixedPID v0.2.1 Fixed-rate**  |          **~2.15 µs** |
 
 Approximate relative speed:
 
