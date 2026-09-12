@@ -346,8 +346,8 @@ v0.2.1 includes an automated test suite covering functional behavior, edge cases
 ========================================
              TEST RESULT
 ========================================
-Total : 73
-PASS  : 73
+Total : 104
+PASS  : 104
 FAIL  : 0
 ========================================
        ALL TESTS PASSED
