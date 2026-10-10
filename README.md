@@ -13,7 +13,7 @@ FixedPID uses integer arithmetic with `int64_t` intermediate calculations instea
 * `int32_t` input and output
 * `int64_t` intermediate calculations
 * Variable timestep (`update`)
-* Fixed-rate fast path (`updateFixedRate`)
+* Fixed-rate path with precomputed time scaling (`updateFixedRate`)
 * Velocity-form PID (`updateVelocity` / `updateVelocityFixedRate`)
 * Output limiting
 * Integral limiting
@@ -27,9 +27,9 @@ FixedPID uses integer arithmetic with `int64_t` intermediate calculations instea
 
 ## Status
 
-**Version: v0.2.1**
+**Version: v0.2.2**
 
-This release improves performance, expands the API, and increases test coverage.
+This is a bug-fix release on top of v0.2.1. The public API is unchanged except that `setFrequency()` now returns `bool`. See [Changelog](#changelog).
 
 ---
 
@@ -139,6 +139,8 @@ pid.setTunings(
 ### `setFrequency(uint32_t hz)`
 
 Configures the controller's fixed update frequency.
+
+Valid range is 1 to 1,000,000 Hz. Out-of-range values return `false` and disable the fixed-rate paths (`updateFixedRate()` and `updateVelocityFixedRate()` then always return 0), so check the return value. When the frequency does not divide 1,000,000 evenly (for example 3000 Hz), the integral time base is remainder-compensated and does not drift.
 
 ```cpp
 pid.setFrequency(1000);  // 1 kHz control loop
@@ -266,6 +268,11 @@ Velocity-form PID calculates changes to the controller output rather than direct
 
 This form can be useful for incremental or rate-style actuators and for control systems where incremental output behavior is preferred.
 
+Notes:
+
+* The derivative term still acts on the error, so a setpoint step produces a derivative kick (derivative-on-measurement is on the roadmap).
+* The accumulated output is limited by `setOutputLimits()`. Velocity form does **not** use `setIntegralLimits()`.
+
 ---
 
 ## Output Limits
@@ -295,7 +302,7 @@ This limits the calculated integral contribution and provides an additional safe
 Integral limits and output limits serve different purposes:
 
 * **Output limits** constrain the final controller output.
-* **Integral limits** constrain the integral contribution itself.
+* **Integral limits** constrain the integral contribution itself. The internal integral state is clamped as well, so it cannot wind up behind the limit and reversing the error takes effect immediately.
 
 ---
 
@@ -340,14 +347,14 @@ This is useful when restarting a controller, changing operating conditions, or r
 
 ## Testing
 
-v0.2.1 includes an automated test suite covering functional behavior, edge cases, and fixed-rate operation.
+v0.2.2 includes an automated test suite covering functional behavior, edge cases, and fixed-rate operation.
 
 ```text
 ========================================
              TEST RESULT
 ========================================
-Total : 104
-PASS  : 104
+Total : 125
+PASS  : 125
 FAIL  : 0
 ========================================
        ALL TESTS PASSED
@@ -367,6 +374,10 @@ Coverage includes:
 * Timestep jitter
 * Fixed-rate vs variable-dt behavior
 * New API paths covered by the test suite
+* Integral state clamping and unwind behavior
+* Velocity-form P / I / D remainder carry
+* Fixed-rate time base for frequencies that do not divide 1,000,000
+* `setFrequency()` return value and swapped limit arguments
 
 ---
 
@@ -462,6 +473,31 @@ Possible future work:
 
 ---
 
+## Changelog
+
+### v0.2.2
+
+Fixes:
+
+* **Integral limit** – the internal integral state is now clamped together with the integral term, so it can no longer wind up behind `setIntegralLimits()`. Reversing the error now unwinds immediately. This also removes a possible `int64_t` overflow of `ki × integral` on long runs with the default limits.
+* **Velocity-form P and D** – the sub-LSB remainder of the P and D terms is now carried between calls (as the I term already was). Previously a small `Kp` with a slowly changing error could produce no output at all.
+* **Fixed-rate time base** – the integral of `updateFixedRate()` / `updateVelocityFixedRate()` no longer drops the fraction of `1,000,000 / hz`. At 300 kHz the integral was about 10 % low.
+* **`setFrequency()`** – now returns `bool` (`false` for 0 Hz or above 1 MHz) instead of failing silently.
+* `setOutputLimits()` / `setIntegralLimits()` swap their arguments if `min > max`.
+* README: the Traditional Chinese `setDerivativeFilter` description was inverted (lower alpha = stronger smoothing); the claim that velocity form reduces derivative kick was removed.
+
+Changes:
+
+* Duplicated update code was merged into shared helpers. The P-only fast path was removed.
+* `FixedPID.cpp` no longer includes `Arduino.h`.
+* Test suite grew from 104 to 125 tests.
+
+### v0.2.1
+
+* Added `setFrequency`, `setErrorDeadband`, `setErrorIntegralThreshold`, `setDerivativeFilter`, `updateVelocity` and `updateVelocityFixedRate`.
+
+---
+
 ## Acknowledgments / Feedback from v0.2
 
 During the review of the previous v0.2 implementation, several issues were identified in the integer arithmetic, fixed-rate calculations, and test coverage.
@@ -482,15 +518,11 @@ The main arithmetic and implementation issues identified during the previous rev
 
 ### Current Status
 
-The library is currently undergoing real-world testing on my ESP32-based drone project.
+The library files are included in this release (`src/`), and the 125-test suite passes on an ESP32.
 
-I am intentionally **not including the final library files in this release yet**.
+FixedPID is still being validated in real-world use on my ESP32-based drone project. Until that flight testing is finished, please treat it as a pre-1.0 library and verify the behavior on your own hardware before relying on it.
 
-Before publishing the updated library files, I want to verify the implementation on the actual flight controller and make sure that the PID behavior is stable and reliable under real operating conditions.
-
-Once the FixedPID implementation has been validated on the drone, I will update the repository with the finalized library files and documentation.
-
-This is the final validation stage before the next release.
+FixedPID targets modern 32-bit MCUs. It has been tested on the ESP32; 8-bit AVR boards such as the Arduino UNO are not a target platform and have not been tested.
 
 
 ---

@@ -18,7 +18,7 @@ FixedPID 使用整數運算，並以 `int64_t` 作為中間計算型別，取代
 
 * 可變時間步長（`update`）
 
-* 固定頻率高速路徑（`updateFixedRate`）
+* 固定頻率路徑，預先計算時間縮放（`updateFixedRate`）
 
 * 速度型 PID（`updateVelocity` / `updateVelocityFixedRate`）
 
@@ -42,9 +42,9 @@ FixedPID 使用整數運算，並以 `int64_t` 作為中間計算型別，取代
 
 ## 目前狀態
 
-**版本：v0.2.1**
+**版本：v0.2.2**
 
-此版本改善了運算效能、擴充 API，並增加測試覆蓋率。
+這是 v0.2.1 之上的錯誤修正版本。公開 API 不變，唯一差別是 `setFrequency()` 現在回傳 `bool`。詳見[更新紀錄](#更新紀錄)。
 
 ---
 
@@ -77,7 +77,7 @@ void loop() {
 }
 ```
 
-### 固定頻率模式（更快）
+### 固定頻率模式
 
 當控制迴圈以固定頻率執行時，可以使用固定頻率模式：
 
@@ -121,16 +121,16 @@ int32_t output = pid.updateFixedRate(target, input);
 | `setIntegralLimits(min, max)`    | 限制積分項範圍                |
 | `reset()`                        | 清除積分與微分相關狀態            |
 | `update(target, input, dt_us)`   | 使用可變時間步長執行一次 PID 計算    |
-| `updateFixedRate(target, input)` | 固定頻率高速運算路徑             |
+| `updateFixedRate(target, input)` | 固定頻率運算路徑（預先計算時間縮放） |
 
 ### v0.2.1 新增
 
 | 函式                               | 用途                                                                                                                                                 |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setFrequency(hz)`                 | 設定 `updateFixedRate` / `updateVelocityFixedRate` 使用的固定迴圈頻率，並預先計算 Ki/Kd 的時間縮放，以降低每次更新的運算成本。                         |
+| `setFrequency(hz)`                 | 設定 `updateFixedRate` / `updateVelocityFixedRate` 使用的固定迴圈頻率，並預先計算 Ki/Kd 的時間縮放。                         |
 | `setErrorDeadband(edb)`            | 忽略 ±deadband 範圍內的微小誤差，可降低接近目標值時由感測器雜訊造成的抖動。                                                                              |
 | `setErrorIntegralThreshold(eit)`   | 限制積分累積只發生在 `error` 的絕對值小於或等於此閾值時，讓積分作用集中在接近目標值的區域。                                                          |
-| `setDerivativeFilter(alpha)`       | 對 D 項套用低通濾波。alpha 越高，濾波效果越強，對雜訊的放大越低。                                                                                      |
+| `setDerivativeFilter(alpha)`       | 對 D 項套用低通濾波。alpha 越低，濾波越強（`1000` = 不濾波，`0` = 保持前一次濾波值）。                                                                                      |
 | `updateVelocity(...)`              | 使用可變時間頻率的速度型 PID，對部分增量式與速率型致動器可能具有更平滑的控制特性。                                                                     |
 | `updateVelocityFixedRate(...)`     | 使用固定頻率的速度型 PID。                                                                                                                             |
 
@@ -141,6 +141,8 @@ int32_t output = pid.updateFixedRate(target, input);
 ### `setFrequency(uint32_t hz)`
 
 告知控制器預期的迴圈頻率（Hz）。使用固定頻率更新函式前，必須先呼叫此函式。
+
+有效範圍為 1 ～ 1,000,000 Hz；範圍外會回傳 `false` 並停用固定頻率路徑（此時 `updateFixedRate()` / `updateVelocityFixedRate()` 一律回傳 0），請檢查回傳值。頻率不能整除 1,000,000 時（例如 3000 Hz），積分的時間基準會以餘數補償，不會累積誤差。
 
 ```cpp
 pid.setFrequency(1000);  // 1 kHz control loop
@@ -181,7 +183,7 @@ pid.setDerivativeFilter(200);  // 實際數值需依系統特性進行調整
 | 模式    | 函式                               | 適用情況                               |
 | ----- | -------------------------------- | ---------------------------------- |
 | 可變 dt | `update(target, input, dt_us)`   | 迴圈週期存在抖動的情況，例如無人機飛控                |
-| 固定頻率  | `updateFixedRate(target, input)` | 嚴格固定週期的 Timer／中斷驅動迴圈；通常具有較低的單次運算成本 |
+| 固定頻率  | `updateFixedRate(target, input)` | 嚴格固定週期的 Timer／中斷驅動迴圈；不需要每次傳入 dt |
 
 ### 速度型 PID
 
@@ -195,7 +197,9 @@ pid.setFrequency(1000);
 int32_t out = pid.updateVelocityFixedRate(target, input);
 ```
 
-速度型 PID 計算的是輸出的增量，因此在某些受控系統中可能具有較平滑的控制特性，也有助於降低微分突波（derivative kick）的影響。
+速度型 PID 計算的是輸出的增量，因此在某些受控系統中可能具有較平滑的控制特性。
+
+注意：速度型的 D 項同樣作用在誤差上，設定點階躍時仍會出現微分突波；若要避免，需要 derivative-on-measurement（列於 Roadmap）。速度型的輸出累積值由 `setOutputLimits()` 限幅，因此**不使用** `setIntegralLimits()`。
 
 ---
 
@@ -211,14 +215,14 @@ int32_t out = pid.updateVelocityFixedRate(target, input);
 
 ## 測試
 
-v0.2.1 擴充了自動化測試，包含功能測試、邊界案例，以及固定頻率路徑的一致性測試。
+v0.2.2 包含自動化測試，包含功能測試、邊界案例，以及固定頻率路徑的一致性測試。
 
 ```text
 ========================================
              TEST RESULT
 ========================================
-Total : 104
-PASS  : 104
+Total : 125
+PASS  : 125
 FAIL  : 0
 ========================================
        ALL TESTS PASSED
@@ -246,6 +250,14 @@ FAIL  : 0
 * 固定頻率與可變 dt 的一致性
 
 * 新增 API 路徑（依測試套件涵蓋範圍）
+
+* 積分狀態限幅與反向解除
+
+* 速度型 P / I / D 的餘數補償
+
+* 頻率無法整除 1,000,000 時的固定頻率時間基準
+
+* `setFrequency()` 回傳值與顛倒的限幅參數
 
 ---
 
@@ -348,6 +360,31 @@ FastPID 與其他整數型 PID 函式庫在 8-bit AVR 平台上仍具有其優�
 
 ---
 
+## 更新紀錄
+
+### v0.2.2
+
+修正：
+
+* **積分限幅**：內部積分狀態現在會和積分項一起被限幅，不會再在 `setIntegralLimits()` 之後繼續累積；誤差反向時會立刻開始解除。同時消除預設限幅下長時間運行可能發生的 `ki × integral` 之 `int64_t` 溢位。
+* **速度型 P 與 D**：P、D 項不足 1 LSB 的餘數現在會帶到下一次計算（I 項原本就有）。以前 `Kp` 很小、誤差變化緩慢時，輸出可能完全不動。
+* **固定頻率時間基準**：`updateFixedRate()` / `updateVelocityFixedRate()` 的積分不再捨去 `1,000,000 / hz` 的小數部分。300 kHz 時積分原本約少 10 %。
+* **`setFrequency()`**：現在回傳 `bool`（0 Hz 或高於 1 MHz 回傳 `false`），不再靜默失敗。
+* `setOutputLimits()` / `setIntegralLimits()` 在 `min > max` 時會自動對調。
+* README：修正繁體中文版 `setDerivativeFilter` 說明顛倒的問題（alpha 越低濾波越強），並移除「速度型能降低微分突波」的說法。
+
+變更：
+
+* 重複的更新程式碼合併為共用函式，並移除 P-only 快速路徑。
+* `FixedPID.cpp` 不再引入 `Arduino.h`。
+* 測試由 104 項增加到 125 項。
+
+### v0.2.1
+
+* 新增 `setFrequency`、`setErrorDeadband`、`setErrorIntegralThreshold`、`setDerivativeFilter`、`updateVelocity`、`updateVelocityFixedRate`。
+
+---
+
 ## Acknowledgments / Feedback from v0.2
 
 在前一版 v0.2 的實作與測試過程中，我發現了一些與整數運算、固定頻率計算以及測試覆蓋率相關的問題。
@@ -378,15 +415,11 @@ FastPID 與其他整數型 PID 函式庫在 8-bit AVR 平台上仍具有其優�
 
 ### 目前狀態
 
-目前 FixedPID 正在我的 **ESP32 無人機專案**上進行實際測試。
+此版本已包含函式庫檔案（`src/`），125 項測試在 ESP32 上全部通過。
 
-我目前**暫時不會在這個版本中放入最終的 Library 檔案**。
+FixedPID 目前仍在我的 **ESP32 無人機專案**上進行實際驗證。在飛行測試完成之前，請將它視為 1.0 之前的版本，並在自己的硬體上確認行為後再使用。
 
-在正式發布更新後的 Library 檔案之前，我希望先將 FixedPID 實際整合至無人機的飛控系統中進行測試，確認 PID 在真實的飛行控制環境下能夠維持穩定且可靠的行為。
-
-等到 FixedPID 在無人機上的實際測試完成後，我會再更新 Repository，加入最終版本的 Library 檔案以及完整文件。
-
-這將會是下一個正式版本發布前的最後驗證階段。
+FixedPID 以現代 32 位元 MCU 為主要目標，已在 ESP32 上測試；Arduino UNO 等 8 位元 AVR 板並非目標平台，也尚未測試。
 
 ---
 

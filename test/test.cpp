@@ -1246,6 +1246,210 @@ void testIntegralThresholdTransition() {
 }
 
 // ========================================================
+// REGRESSION: BUGS FIXED AFTER v0.2.1 REVIEW
+// ========================================================
+
+void testIntegralStateClamp() {
+
+  // The integral STATE must stop at the limit, not only the output term.
+  // 100 steps of error=100 would be 10000 unclamped; limit is 500.
+  {
+    FixedPID pid;
+    pid.setTunings(0, 1000000, 0);
+    pid.setIntegralLimits(-500, 500);
+
+    int32_t out = 0;
+    for (int i = 0; i < 100; i++) {
+      out = pid.update(100, 0, 1000);
+    }
+    testResult("Integral state clamp: held at limit", 500, out);
+
+    testResult("Integral state clamp: unwinds at once (high)",
+               400,
+               pid.update(-100, 0, 1000));
+  }
+
+  {
+    FixedPID pid;
+    pid.setTunings(0, 1000000, 0);
+    pid.setIntegralLimits(-500, 500);
+
+    int32_t out = 0;
+    for (int i = 0; i < 100; i++) {
+      out = pid.update(-100, 0, 1000);
+    }
+    testResult("Integral state clamp: held at limit (low)", -500, out);
+
+    testResult("Integral state clamp: unwinds at once (low)",
+               -400,
+               pid.update(100, 0, 1000));
+  }
+
+  // Default (INT32) limits must also bound the state: this used to overflow
+  // ki * integral in int64_t and return garbage.
+  {
+    FixedPID pid;
+    pid.setTunings(0, 1000000, 0);
+
+    int32_t out = 0;
+    for (int i = 0; i < 200000; i++) {
+      out = pid.update(1000000, 0, 1000);
+    }
+    testResult("Integral state clamp: no int64 overflow",
+               INT32_MAX,
+               out);
+  }
+
+  // Same behaviour on the fixed-rate path.
+  {
+    FixedPID pid;
+    pid.setTunings(0, 1000000, 0);
+    pid.setFrequency(1000);
+    pid.setIntegralLimits(-500, 500);
+
+    for (int i = 0; i < 100; i++) {
+      pid.updateFixedRate(100, 0);
+    }
+    testResult("Integral state clamp: fixed rate unwinds at once",
+               400,
+               pid.updateFixedRate(-100, 0));
+  }
+}
+
+void testVelocityRemainders() {
+
+  // P: kp=0.5, error rises by 1 per step to 100. Each delta is 0.5 -> was
+  // truncated to 0 every time, so the output never moved.
+  {
+    FixedPID pid;
+    pid.setTunings(500, 0, 0);
+
+    int32_t out = 0;
+    for (int i = 1; i <= 100; i++) {
+      out = pid.updateVelocity(i, 0, 1000);
+    }
+    testResult("Velocity P remainder (variable dt)", 50, out);
+
+    for (int i = 99; i >= 0; i--) {
+      out = pid.updateVelocity(i, 0, 1000);
+    }
+    testResult("Velocity P remainder returns to 0", 0, out);
+  }
+
+  {
+    FixedPID pid;
+    pid.setTunings(500, 0, 0);
+    pid.setFrequency(1000);
+
+    int32_t out = 0;
+    for (int i = 1; i <= 100; i++) {
+      out = pid.updateVelocityFixedRate(i, 0);
+    }
+    testResult("Velocity P remainder (fixed rate)", 50, out);
+  }
+
+  // D, fixed rate: second error difference is 1 each step, kd=0.001, hz=1
+  // -> 0.001 per step, 1000 steps -> 1.
+  {
+    FixedPID pid;
+    pid.setTunings(0, 0, 1);
+    pid.setFrequency(1);
+
+    int32_t out = 0;
+    for (int i = 1; i <= 1000; i++) {
+      out = pid.updateVelocityFixedRate(i * (i + 1) / 2, 0);
+    }
+    testResult("Velocity D remainder (fixed rate)", 1, out);
+  }
+
+  // D, variable dt: same signal, dt = 1 s. Q20 fraction -> within 1 LSB.
+  {
+    FixedPID pid;
+    pid.setTunings(0, 0, 1);
+
+    int32_t out = 0;
+    for (int i = 1; i <= 1100; i++) {
+      out = pid.updateVelocity(i * (i + 1) / 2, 0, 1000000);
+    }
+    testResult("Velocity D remainder (variable dt)", 1, out);
+  }
+}
+
+void testFixedRateTimeBase() {
+
+  // 300 kHz: dt_us = 3 (true 3.333). 300000 steps = exactly 1 s.
+  // error=1000, Ki=1000.0/s -> 1,000,000. Used to give 900,000.
+  {
+    FixedPID pid;
+    pid.setTunings(0, 1000000, 0);
+    pid.setFrequency(300000);
+
+    int32_t out = 0;
+    for (int i = 0; i < 300000; i++) {
+      out = pid.updateFixedRate(1000, 0);
+    }
+    testResult("Fixed-rate integral 300 kHz time base", 1000000, out);
+  }
+
+  // Same for the velocity form.
+  {
+    FixedPID pid;
+    pid.setTunings(0, 1000000, 0);
+    pid.setFrequency(300000);
+
+    int32_t out = 0;
+    for (int i = 0; i < 300000; i++) {
+      out = pid.updateVelocityFixedRate(1000, 0);
+    }
+    testBool("Velocity fixed-rate integral 300 kHz time base",
+             out >= 999990 && out <= 1000000);
+  }
+
+  // Divisible frequencies stay identical to the variable-dt path.
+  {
+    FixedPID ref, fast;
+    ref.setTunings(1500, 200000, 800);
+    fast.setTunings(1500, 200000, 800);
+    fast.setFrequency(2000);
+
+    bool pass = true;
+    for (int i = 0; i < 1000 && pass; i++) {
+      int32_t t = 1000 + ((i * 37) % 500);
+      int32_t x = 800 + ((i * 23) % 400);
+      pass = ref.update(t, x, 500) == fast.updateFixedRate(t, x);
+    }
+    testBool("Fixed rate 2000 Hz identical to dt=500", pass);
+  }
+}
+
+void testSetFrequencyResult() {
+  FixedPID pid;
+  testBool("setFrequency valid returns true", pid.setFrequency(1000));
+  testBool("setFrequency 0 returns false", !pid.setFrequency(0));
+  testBool("setFrequency > 1 MHz returns false", !pid.setFrequency(1000001));
+  testBool("setFrequency 1 MHz returns true", pid.setFrequency(1000000));
+}
+
+void testLimitOrder() {
+  FixedPID pid;
+  pid.setTunings(1000, 0, 0);
+  pid.setOutputLimits(50, -50);   // swapped on purpose
+
+  testResult("Swapped output limits high", 50, pid.update(100, 0, 1000));
+  pid.reset();
+  testResult("Swapped output limits low", -50, pid.update(-100, 0, 1000));
+
+  FixedPID pid2;
+  pid2.setTunings(0, 1000000, 0);
+  pid2.setIntegralLimits(500, -500);
+  int32_t out = 0;
+  for (int i = 0; i < 100; i++) {
+    out = pid2.update(100, 0, 1000);
+  }
+  testResult("Swapped integral limits", 500, out);
+}
+
+// ========================================================
 // BENCHMARK
 // ========================================================
 
@@ -1468,22 +1672,31 @@ void setup() {
   testP();
   testI();
   testD();
+
   testDerivativeFilter();
   testDerivativeFilterEdgeCases();
+
   testDDt();
+
   testBasic();
   testReset();
   testDt();
+
   testOutputLimit();
   testIntegralLimit();
   testAntiWindup();
+
   testFixedPoint();
+
   testInt32();
   testKpLimits();
+
   testDeadband();
   testErrorIntegralThreshold();
   testFrequency();
+
   testLongRun();
+
   testFixedRate();
 
   // Velocity form
@@ -1503,16 +1716,27 @@ void setup() {
   testInt64ErrorChange();
   testIntegralThresholdTransition();
 
+  // Regression tests for the post-review fixes
+  testIntegralStateClamp();
+  testVelocityRemainders();
+  testFixedRateTimeBase();
+  testSetFrequencyResult();
+  testLimitOrder();
+
   Serial.println();
   Serial.println("========================================");
   Serial.println("             TEST RESULT");
   Serial.println("========================================");
+
   Serial.print("Total : ");
   Serial.println(totalTests);
+
   Serial.print("PASS  : ");
   Serial.println(passedTests);
+
   Serial.print("FAIL  : ");
   Serial.println(totalTests - passedTests);
+
   Serial.println("========================================");
 
   if (passedTests == totalTests) {
