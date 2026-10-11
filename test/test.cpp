@@ -1450,6 +1450,137 @@ void testLimitOrder() {
 }
 
 // ========================================================
+// RANGE PROTECTION (extreme inputs must saturate, never overflow)
+// ========================================================
+
+void testRangeProtection() {
+
+  // Position form, P + D at the int32 extremes
+  {
+    FixedPID pid;
+    pid.setTunings(INT32_MAX, 0, INT32_MAX);
+
+    testResult("Range: extreme P+D step up",
+               INT32_MAX,
+               pid.update(INT32_MAX, INT32_MIN, 1));
+
+    testResult("Range: extreme P+D step down",
+               INT32_MIN,
+               pid.update(INT32_MIN, INT32_MAX, 1));
+  }
+
+  // Position form, huge Ki and the largest possible dt
+  {
+    FixedPID pid;
+    pid.setTunings(0, INT32_MAX, 0);
+
+    testResult("Range: extreme I, dt=UINT32_MAX (up)",
+               INT32_MAX,
+               pid.update(INT32_MAX, 0, UINT32_MAX));
+
+    // |error| must be inside the (int32) integral threshold to integrate
+    testResult("Range: extreme I, dt=UINT32_MAX (down)",
+               INT32_MIN,
+               pid.update(-INT32_MAX, 0, UINT32_MAX));
+  }
+
+  // Velocity form, everything at maximum
+  {
+    FixedPID pid;
+    pid.setTunings(INT32_MAX, INT32_MAX, INT32_MAX);
+
+    testResult("Range: extreme velocity form (up)",
+               INT32_MAX,
+               pid.updateVelocity(INT32_MAX, INT32_MIN, 1000));
+
+    testResult("Range: extreme velocity form (down)",
+               INT32_MIN,
+               pid.updateVelocity(INT32_MIN, INT32_MAX, 1000));
+  }
+
+  // Fixed-rate paths at 1 MHz with maximum gains
+  {
+    FixedPID pid;
+    pid.setTunings(INT32_MAX, INT32_MAX, INT32_MAX);
+    pid.setFrequency(1000000);
+
+    testResult("Range: extreme fixed rate (up)",
+               INT32_MAX,
+               pid.updateFixedRate(INT32_MAX, INT32_MIN));
+
+    testResult("Range: extreme fixed rate (down)",
+               INT32_MIN,
+               pid.updateFixedRate(INT32_MIN, INT32_MAX));
+  }
+
+  {
+    FixedPID pid;
+    pid.setTunings(INT32_MAX, INT32_MAX, INT32_MAX);
+    pid.setFrequency(1000000);
+
+    testResult("Range: extreme velocity fixed rate (up)",
+               INT32_MAX,
+               pid.updateVelocityFixedRate(INT32_MAX, INT32_MIN));
+
+    testResult("Range: extreme velocity fixed rate (down)",
+               INT32_MIN,
+               pid.updateVelocityFixedRate(INT32_MIN, INT32_MAX));
+  }
+
+  // Derivative filter must not overflow either
+  {
+    FixedPID pid;
+    pid.setTunings(0, 0, INT32_MAX);
+    pid.setDerivativeFilter(500);
+
+    testResult("Range: extreme D with filter",
+               INT32_MAX,
+               pid.update(INT32_MAX, INT32_MIN, 1));
+  }
+
+  // Output limits are still honored at the extremes
+  {
+    FixedPID pid;
+    pid.setTunings(INT32_MAX, INT32_MAX, INT32_MAX);
+    pid.setOutputLimits(-1000, 1000);
+
+    testResult("Range: extreme with output limits (up)",
+               1000,
+               pid.update(INT32_MAX, INT32_MIN, 1));
+
+    testResult("Range: extreme with output limits (down)",
+               -1000,
+               pid.update(INT32_MIN, INT32_MAX, 1));
+  }
+
+  // A huge dt must not disturb normal terms
+  {
+    FixedPID pid;
+    pid.setTunings(1000, 0, 1000);
+
+    testResult("Range: dt=UINT32_MAX keeps P exact",
+               100,
+               pid.update(100, 0, UINT32_MAX));
+  }
+
+  // Recovery: after saturating, a normal step behaves normally again
+  {
+    FixedPID pid;
+    pid.setTunings(1000, 1000000, 0);
+    pid.setOutputLimits(-1000, 1000);
+
+    for (int i = 0; i < 1000; i++) {
+      pid.update(INT32_MAX, INT32_MIN, UINT32_MAX);
+    }
+    pid.reset();
+
+    testResult("Range: normal after extremes + reset",
+               200,   // P = 100, I = 100
+               pid.update(100, 0, 1000));
+  }
+}
+
+// ========================================================
 // BENCHMARK
 // ========================================================
 
@@ -1722,6 +1853,7 @@ void setup() {
   testFixedRateTimeBase();
   testSetFrequencyResult();
   testLimitOrder();
+  testRangeProtection();
 
   Serial.println();
   Serial.println("========================================");

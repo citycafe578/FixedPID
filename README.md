@@ -2,6 +2,8 @@
 
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
+Documentation: [Usage guide](docs/USAGE.md) · [使用指南（繁體中文）](docs/USAGE.zh-TW.md)
+
 A small fixed-point PID controller designed for embedded systems.
 
 FixedPID uses integer arithmetic with `int64_t` intermediate calculations instead of floating-point math. It is designed for applications that need predictable integer-based computation, low overhead, and explicit control over sample timing.
@@ -23,13 +25,14 @@ FixedPID uses integer arithmetic with `int64_t` intermediate calculations instea
 * Derivative low-pass filtering
 * Controller state reset
 * `dt = 0` protection
+* Range protection: overflow-safe saturating arithmetic for any `int32_t` input, gain and timestep
 * Designed for embedded systems
 
 ## Status
 
-**Version: v0.2.2**
+**Version: v1.0.0**
 
-This is a bug-fix release on top of v0.2.1. The public API is unchanged except that `setFrequency()` now returns `bool`. See [Changelog](#changelog).
+First stable release. It fixes the known bugs of v0.2.1, adds input-range protection, a usage guide and an automated test suite, and is faster than before. The public API is unchanged except that `setFrequency()` now returns `bool`. See [Changelog](#changelog).
 
 ---
 
@@ -347,14 +350,14 @@ This is useful when restarting a controller, changing operating conditions, or r
 
 ## Testing
 
-v0.2.2 includes an automated test suite covering functional behavior, edge cases, and fixed-rate operation.
+v1.0.0 includes an automated test suite covering functional behavior, edge cases, and fixed-rate operation.
 
 ```text
 ========================================
              TEST RESULT
 ========================================
-Total : 125
-PASS  : 125
+Total : 140
+PASS  : 140
 FAIL  : 0
 ========================================
        ALL TESTS PASSED
@@ -378,6 +381,11 @@ Coverage includes:
 * Velocity-form P / I / D remainder carry
 * Fixed-rate time base for frequencies that do not divide 1,000,000
 * `setFrequency()` return value and swapped limit arguments
+* Range protection: extreme gains, errors and timesteps on every update path
+
+### Running the tests on a PC
+
+`make test` builds the unit tests and a randomized fuzz test with AddressSanitizer and UBSan and runs them (needs `make` and GCC or Clang). The fuzz test compares every update path with a 128-bit reference model, throws random extreme configurations at all four update functions, and checks that variable-dt and fixed-rate agree and that `reset()` restores a fresh state. The same checks run in GitHub Actions on every push. See the [Usage guide](docs/USAGE.md#14-running-the-tests).
 
 ---
 
@@ -462,7 +470,7 @@ FastPID and other integer-based libraries remain relevant on 8-bit AVR platforms
 
 ## Roadmap
 
-Possible future work:
+Planned for a later major release:
 
 * More derivative-on-measurement options
 * Setpoint weighting / ramping
@@ -475,7 +483,7 @@ Possible future work:
 
 ## Changelog
 
-### v0.2.2
+### v1.0.0
 
 Fixes:
 
@@ -484,13 +492,17 @@ Fixes:
 * **Fixed-rate time base** – the integral of `updateFixedRate()` / `updateVelocityFixedRate()` no longer drops the fraction of `1,000,000 / hz`. At 300 kHz the integral was about 10 % low.
 * **`setFrequency()`** – now returns `bool` (`false` for 0 Hz or above 1 MHz) instead of failing silently.
 * `setOutputLimits()` / `setIntegralLimits()` swap their arguments if `min > max`.
+* **Range protection** – every `int32_t` input and gain and every `uint32_t` timestep is now accepted without `int64_t` overflow or undefined behavior. Intermediate products saturate instead, and the output always stays inside the output limits. Previously, extreme gains, errors or timesteps could overflow silently.
+* **Velocity-form remainder** – the variable-dt derivative remainder now uses the same accumulation rule as the fixed-rate path, so both give identical results.
 * README: the Traditional Chinese `setDerivativeFilter` description was inverted (lower alpha = stronger smoothing); the claim that velocity form reduces derivative kick was removed.
 
 Changes:
 
+* Faster on the ESP32: 64-bit divisions by 1000 and 1e9 now use 32-bit hardware divides, and multiply overflow checks are skipped when the operands are provably small. Measured on an ESP32 (variable-dt / fixed-rate): P 1.03 / 1.03 µs, PI 1.68 / 1.62 µs, full PID 2.18 / 2.06 µs per update.
 * Duplicated update code was merged into shared helpers. The P-only fast path was removed.
 * `FixedPID.cpp` no longer includes `Arduino.h`.
-* Test suite grew from 104 to 125 tests.
+* Test suite grew from 104 to 140 tests. New: a PC build of the test suite and a sanitizer-instrumented fuzz test (`make test`), plus a GitHub Actions workflow.
+* Added the [Usage guide](docs/USAGE.md) (English and Traditional Chinese), `library.properties`, and one folder per example (`examples/<name>/<name>.ino`), which the Arduino IDE requires.
 
 ### v0.2.1
 
@@ -518,9 +530,9 @@ The main arithmetic and implementation issues identified during the previous rev
 
 ### Current Status
 
-The library files are included in this release (`src/`), and the 125-test suite passes on an ESP32.
+The library files are included in this release (`src/`), and the 140-test suite passes on an ESP32.
 
-FixedPID is still being validated in real-world use on my ESP32-based drone project. Until that flight testing is finished, please treat it as a pre-1.0 library and verify the behavior on your own hardware before relying on it.
+FixedPID is also being validated in real-world use on my ESP32-based drone project. As with any control library, verify the behavior on your own hardware before relying on it.
 
 FixedPID targets modern 32-bit MCUs. It has been tested on the ESP32; 8-bit AVR boards such as the Arduino UNO are not a target platform and have not been tested.
 

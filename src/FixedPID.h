@@ -6,6 +6,16 @@
 #define PID_SCALE 1000LL
 #define TIME_SCALE 1000000LL
 
+// Units
+//   target, input, error  int32_t, any unit (error = target - input, 33-bit range)
+//   kp, ki, kd            gain x PID_SCALE (1.5 -> 1500); ki per second, kd in seconds
+//   dt_us                 microseconds
+//   output                int32_t, limited by setOutputLimits()
+//
+// Range protection: every int32 input, every int32 gain and every uint32 dt is
+// accepted. Intermediate arithmetic saturates instead of overflowing, so the
+// result is always inside the output limits and there is no undefined behavior.
+// See docs/USAGE.md for details.
 class FixedPID{
     public:
         FixedPID();
@@ -41,6 +51,7 @@ class FixedPID{
         uint32_t hz;
         int64_t derivativeScale;
         int64_t dtRemainder;       // 1000000 % hz, keeps the fixed-rate integral time base exact
+        int64_t integralMulLimit;  // |integral| below this: ki * integral cannot overflow int64
 
         uint32_t errorDeadband;
         int32_t errIntegralThreshold;
