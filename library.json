@@ -1,0 +1,32 @@
+{
+  "name": "FixedPID",
+  "version": "1.0.0",
+  "description": "Small fixed-point (integer) PID controller for 32-bit microcontrollers, with variable and fixed timestep, velocity form, anti-windup and overflow-safe arithmetic.",
+  "keywords": "pid, fixed-point, integer, controller, control, esp32",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/citycafe578/FixedPID.git"
+  },
+  "authors": [
+    {
+      "name": "citycafe578",
+      "url": "https://github.com/citycafe578",
+      "maintainer": true
+    }
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/citycafe578/FixedPID",
+  "frameworks": "arduino",
+  "platforms": "*",
+  "headers": "FixedPID.h",
+  "export": {
+    "include": [
+      "src",
+      "examples",
+      "library.json",
+      "library.properties",
+      "LICENSE",
+      "README.md"
+    ]
+  }
+}
