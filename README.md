@@ -124,7 +124,7 @@ pid.setTunings(
 | `update(target, input, dt_us)`   | Perform a PID update using the supplied timestep                          |
 | `updateFixedRate(target, input)` | Perform a PID update using the configured fixed frequency                 |
 
-### New in v0.2.1
+### New in v0.2
 
 | Function                                 | Purpose                                                                                                                                                    |
 | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -391,11 +391,29 @@ Coverage includes:
 
 ## Benchmark
 
-Platform: **Nologo ESP32-C3 SuperMini @ 160 MHz**
-
 Lower is better. Measurements represent the approximate execution time of one controller update.
 
-### FixedPID v0.2.1
+### FixedPID v1.0.0 on ESP32
+
+Platform: **ESP32 (ESP32-D0WD-V3, dual core @ 240 MHz)**, 140-test suite passing on the same build.
+
+| Mode                               |       P only |           PI |     Full PID |
+| ---------------------------------- | -----------: | -----------: | -----------: |
+| **Variable-dt** (`update`)         | **1.028 µs** | **1.675 µs** | **2.180 µs** |
+| **Fixed-rate** (`updateFixedRate`) | **1.033 µs** | **1.620 µs** | **2.063 µs** |
+
+Compared with v0.2.2 on the same ESP32. v1.0.0 adds range protection and is still faster, because 64-bit divisions by 1000 and 1e9 now use 32-bit hardware divides:
+
+| Mode (Full PID)  |  v0.2.2 | v1.0.0 |
+| ---------------- | ------: | -----: |
+| Variable-dt      | 2.424 µs | **2.180 µs** |
+| Fixed-rate       | 2.462 µs | **2.063 µs** |
+
+The ESP32 has no hardware 64-bit divide, so fixed-rate saves little there; on the ESP32-C3 below the difference is much larger.
+
+### ESP32-C3 results (v0.2.1)
+
+Platform: **Nologo ESP32-C3 SuperMini @ 160 MHz**
 
 | Mode                               |       P only |           PI |     Full PID |
 | ---------------------------------- | -----------: | -----------: | -----------: |
@@ -485,6 +503,18 @@ Planned for a later major release:
 
 ### v1.0.0
 
+First stable release. The public API is unchanged from v0.2.2.
+
+New:
+
+* **Range protection** – every `int32_t` input and gain and every `uint32_t` timestep is now accepted without `int64_t` overflow or undefined behavior. Intermediate products saturate instead, and the output always stays inside the output limits. Previously, extreme gains, errors or timesteps could overflow silently.
+* **Velocity-form remainder** – the variable-dt derivative remainder now uses the same accumulation rule as the fixed-rate path, so both give identical results.
+* **Faster on the ESP32** – 64-bit divisions by 1000 and 1e9 now use 32-bit hardware divides, and multiply overflow checks are skipped when the operands are provably small. Measured on an ESP32 (variable-dt / fixed-rate): P 1.03 / 1.03 µs, PI 1.68 / 1.62 µs, full PID 2.18 / 2.06 µs per update.
+* **Tests** – 125 to 140 tests. Added a PC build of the test suite and a sanitizer-instrumented fuzz test against a 128-bit reference model (`make test`), plus a GitHub Actions workflow.
+* **Documentation and packaging** – added the [Usage guide](docs/USAGE.md) (English and Traditional Chinese), `library.properties`, and one folder per example (`examples/<name>/<name>.ino`), which the Arduino IDE requires.
+
+### v0.2.2
+
 Fixes:
 
 * **Integral limit** – the internal integral state is now clamped together with the integral term, so it can no longer wind up behind `setIntegralLimits()`. Reversing the error now unwinds immediately. This also removes a possible `int64_t` overflow of `ki × integral` on long runs with the default limits.
@@ -492,50 +522,49 @@ Fixes:
 * **Fixed-rate time base** – the integral of `updateFixedRate()` / `updateVelocityFixedRate()` no longer drops the fraction of `1,000,000 / hz`. At 300 kHz the integral was about 10 % low.
 * **`setFrequency()`** – now returns `bool` (`false` for 0 Hz or above 1 MHz) instead of failing silently.
 * `setOutputLimits()` / `setIntegralLimits()` swap their arguments if `min > max`.
-* **Range protection** – every `int32_t` input and gain and every `uint32_t` timestep is now accepted without `int64_t` overflow or undefined behavior. Intermediate products saturate instead, and the output always stays inside the output limits. Previously, extreme gains, errors or timesteps could overflow silently.
-* **Velocity-form remainder** – the variable-dt derivative remainder now uses the same accumulation rule as the fixed-rate path, so both give identical results.
 * README: the Traditional Chinese `setDerivativeFilter` description was inverted (lower alpha = stronger smoothing); the claim that velocity form reduces derivative kick was removed.
 
 Changes:
 
-* Faster on the ESP32: 64-bit divisions by 1000 and 1e9 now use 32-bit hardware divides, and multiply overflow checks are skipped when the operands are provably small. Measured on an ESP32 (variable-dt / fixed-rate): P 1.03 / 1.03 µs, PI 1.68 / 1.62 µs, full PID 2.18 / 2.06 µs per update.
 * Duplicated update code was merged into shared helpers. The P-only fast path was removed.
 * `FixedPID.cpp` no longer includes `Arduino.h`.
-* Test suite grew from 104 to 140 tests. New: a PC build of the test suite and a sanitizer-instrumented fuzz test (`make test`), plus a GitHub Actions workflow.
-* Added the [Usage guide](docs/USAGE.md) (English and Traditional Chinese), `library.properties`, and one folder per example (`examples/<name>/<name>.ino`), which the Arduino IDE requires.
+* Test suite grew from 104 to 125 tests.
 
 ### v0.2.1
 
-* Added `setFrequency`, `setErrorDeadband`, `setErrorIntegralThreshold`, `setDerivativeFilter`, `updateVelocity` and `updateVelocityFixedRate`.
+Fixes for issues found while reviewing v0.2:
+
+* `PID_SCALE` was applied incorrectly in the P / I / D gain calculations.
+* `setFrequency()` could divide by zero; it now rejects 0 Hz and frequencies above 1 MHz.
+* The velocity-form integral term lost precision; its remainder is now carried between calls.
+* The fixed-rate derivative lost precision; it is now computed from `kd × hz`.
+* The previous error was stored in too narrow an integer type.
+* The documentation of `setErrorIntegralThreshold()` was inconsistent.
+* Removed the unused `<math.h>` include.
+* Test suite grew from 73 to 104 tests.
+
+### v0.2
+
+* Added `setFrequency` and `updateFixedRate` (fixed-rate path with precomputed time scaling).
+* Added velocity-form PID: `updateVelocity` and `updateVelocityFixedRate`.
+* Added tuning helpers: `setErrorDeadband`, `setErrorIntegralThreshold` and `setDerivativeFilter`.
+* Leaner update path with fewer intermediate variables.
+* Added the Traditional Chinese README and two more examples.
+* Test suite expanded to 73 tests.
+
+### v0.1
+
+* First public release: P / PI / PID with fixed-point gains, `int32_t` input and output, `int64_t` intermediates, variable timestep, output and integral limits, anti-windup, `reset()` and `dt = 0` protection.
 
 ---
 
-## Acknowledgments / Feedback from v0.2
-
-During the review of the previous v0.2 implementation, several issues were identified in the integer arithmetic, fixed-rate calculations, and test coverage.
-
-The main issues included:
-
-* Incorrect application of `PID_SCALE` in the P/I/D gain calculations
-* A potential divide-by-zero condition in `setFrequency()`
-* Loss of precision in the velocity-form integral term
-* Precision loss in fixed-rate derivative calculations
-* Insufficient integer width for storing previous error values
-* Inconsistent documentation for `setErrorIntegralThreshold()`
-* Several APIs that were not properly covered by functional tests
-
-These issues have now been addressed, and the corresponding test coverage has also been expanded.
-
-The main arithmetic and implementation issues identified during the previous review have been fixed. The test suite has also been expanded to cover edge cases such as frequency boundaries, integer limits, error deadbands, integral thresholds, derivative filtering, velocity-form integral precision, and fixed-rate calculations.
-
-### Current Status
+## Current Status
 
 The library files are included in this release (`src/`), and the 140-test suite passes on an ESP32.
 
 FixedPID is also being validated in real-world use on my ESP32-based drone project. As with any control library, verify the behavior on your own hardware before relying on it.
 
 FixedPID targets modern 32-bit MCUs. It has been tested on the ESP32; 8-bit AVR boards such as the Arduino UNO are not a target platform and have not been tested.
-
 
 ---
 
