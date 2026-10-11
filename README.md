@@ -23,6 +23,8 @@ FixedPID uses integer arithmetic with `int64_t` intermediate calculations instea
 * Error deadband
 * Integral threshold control
 * Derivative low-pass filtering
+* Optional derivative on measurement (no derivative kick on setpoint steps)
+* `setTuningsFloat()` setup helper: gains as plain numbers (`1.5f`) instead of `x 1000`
 * Controller state reset
 * `dt = 0` protection
 * Range protection: overflow-safe saturating arithmetic for any `int32_t` input, gain and timestep
@@ -30,9 +32,9 @@ FixedPID uses integer arithmetic with `int64_t` intermediate calculations instea
 
 ## Status
 
-**Version: v1.0.0**
+**Version: v1.1.0**
 
-First stable release. It fixes the known bugs of v0.2.1, adds input-range protection, a usage guide and an automated test suite, and is faster than before. The public API is unchanged except that `setFrequency()` now returns `bool`. See [Changelog](#changelog).
+Adds optional derivative on measurement and a float tuning helper on top of v1.0.0. Fully backward compatible: existing code behaves exactly as before. See [Changelog](#changelog).
 
 ---
 
@@ -134,6 +136,13 @@ pid.setTunings(
 | `setDerivativeFilter(alpha)`             | Apply a first-order low-pass filter to the derivative term. Lower alpha values produce stronger smoothing.                                                 |
 | `updateVelocity(target, input, dt_us)`   | Perform velocity-form PID using a variable timestep.                                                                                                       |
 | `updateVelocityFixedRate(target, input)` | Perform velocity-form PID using the configured fixed frequency.                                                                                            |
+
+### New in v1.1
+
+| Function                                 | Purpose                                                                                                   |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `setDerivativeOnMeasurement(enable)`     | Make the D term act on the measurement instead of the error, so a setpoint step causes no derivative kick. Default off. |
+| `setTuningsFloat(kp, ki, kd)`            | Set the gains as plain numbers (`1.5f`) in `setup()`. Rounded to 0.001; returns `false` for NaN or out-of-range gains.  |
 
 ---
 
@@ -240,6 +249,37 @@ The appropriate value depends on sensor noise, loop frequency, and the dynamics 
 
 ---
 
+### `setDerivativeOnMeasurement(bool enable)`
+
+By default the D term acts on the error, so a sudden change of `target` produces a one-step spike (derivative kick). With
+
+```cpp
+pid.setDerivativeOnMeasurement(true);
+```
+
+the D term acts on the measurement instead: `D = -Kd · d(input)/dt`. A setpoint step no longer kicks, and with a constant `target` the result is identical to the default.
+
+* Default is `false`. Works with all four update functions. In velocity form only the D term moves to the measurement; P and I stay on the error.
+* The first update after switching it on (or after `reset()`) only records the input, so the initial input value does not cause a kick.
+* The error deadband does not apply to the D term in this mode (it sees the raw measurement). Use `setDerivativeFilter()` against sensor noise.
+* It can be switched at any time.
+
+---
+
+### `setTuningsFloat(float kp, float ki, float kd)`
+
+A convenience for `setup()`: write the gains as plain numbers.
+
+```cpp
+pid.setTuningsFloat(1.5f, 0.2f, 0.05f);   // same as setTunings(1500, 200, 50)
+```
+
+Each gain is multiplied by 1000 and rounded to the nearest integer, so values are resolved to 0.001. Floating point is used only inside this call, never in the update functions, so call it from `setup()` and not from the control loop.
+
+Returns `false` if a gain is NaN (set to 0) or outside ±2,147,483.647 (saturated). The other gains are still applied.
+
+---
+
 ## `update()` vs `updateFixedRate()`
 
 | Mode              | Function                         | When to use                                           |
@@ -273,7 +313,7 @@ This form can be useful for incremental or rate-style actuators and for control 
 
 Notes:
 
-* The derivative term still acts on the error, so a setpoint step produces a derivative kick (derivative-on-measurement is on the roadmap).
+* By default the derivative term acts on the error, so a setpoint step produces a derivative kick. Use `setDerivativeOnMeasurement(true)` to avoid it (only D moves to the measurement; P stays on the error).
 * The accumulated output is limited by `setOutputLimits()`. Velocity form does **not** use `setIntegralLimits()`.
 
 ---
@@ -356,8 +396,8 @@ v1.0.0 includes an automated test suite covering functional behavior, edge cases
 ========================================
              TEST RESULT
 ========================================
-Total : 140
-PASS  : 140
+Total : 173
+PASS  : 173
 FAIL  : 0
 ========================================
        ALL TESTS PASSED
@@ -382,6 +422,8 @@ Coverage includes:
 * Fixed-rate time base for frequencies that do not divide 1,000,000
 * `setFrequency()` return value and swapped limit arguments
 * Range protection: extreme gains, errors and timesteps on every update path
+* Derivative on measurement on every update path (no kick, same result at a constant setpoint, reset, mode switching)
+* `setTuningsFloat()` rounding, NaN and out-of-range gains
 
 ### Running the tests on a PC
 
@@ -393,21 +435,21 @@ Coverage includes:
 
 Lower is better. Measurements represent the approximate execution time of one controller update.
 
-### FixedPID v1.0.0 on ESP32
+### FixedPID v1.1.0 on ESP32
 
-Platform: **ESP32 (ESP32-D0WD-V3, dual core @ 240 MHz)**, 140-test suite passing on the same build.
+Platform: **ESP32 (ESP32-D0WD-V3, dual core @ 240 MHz)**.
 
 | Mode                               |       P only |           PI |     Full PID |
 | ---------------------------------- | -----------: | -----------: | -----------: |
-| **Variable-dt** (`update`)         | **1.028 µs** | **1.675 µs** | **2.180 µs** |
-| **Fixed-rate** (`updateFixedRate`) | **1.033 µs** | **1.620 µs** | **2.063 µs** |
+| **Variable-dt** (`update`)         | **1.132 µs** | **1.791 µs** | **2.265 µs** |
+| **Fixed-rate** (`updateFixedRate`) | **1.150 µs** | **1.719 µs** | **2.116 µs** |
 
-Compared with v0.2.2 on the same ESP32. v1.0.0 adds range protection and is still faster, because 64-bit divisions by 1000 and 1e9 now use 32-bit hardware divides:
+Compared with v0.2.2 on the same ESP32. v1.1.0 includes range protection and is still faster, because 64-bit divisions by 1000 and 1e9 now use 32-bit hardware divides:
 
-| Mode (Full PID)  |  v0.2.2 | v1.0.0 |
+| Mode (Full PID)  |  v0.2.2 | v1.1.0 |
 | ---------------- | ------: | -----: |
-| Variable-dt      | 2.424 µs | **2.180 µs** |
-| Fixed-rate       | 2.462 µs | **2.063 µs** |
+| Variable-dt      | 2.424 µs | **2.265 µs** |
+| Fixed-rate       | 2.462 µs | **2.116 µs** |
 
 The ESP32 has no hardware 64-bit divide, so fixed-rate saves little there; on the ESP32-C3 below the difference is much larger.
 
@@ -490,7 +532,6 @@ FastPID and other integer-based libraries remain relevant on 8-bit AVR platforms
 
 Planned for a later major release:
 
-* More derivative-on-measurement options
 * Setpoint weighting / ramping
 * Output slew-rate limiting
 * Bumpless transfer helpers
@@ -500,6 +541,15 @@ Planned for a later major release:
 ---
 
 ## Changelog
+
+### v1.1.0
+
+New (backward compatible, existing behavior is unchanged):
+
+* **`setDerivativeOnMeasurement(bool)`** – optional derivative on measurement for all four update functions, so a setpoint step no longer produces a derivative kick. Default off.
+* **`setTuningsFloat(kp, ki, kd)`** – set the gains as plain numbers in `setup()`; returns `false` for NaN or out-of-range gains.
+* **Tests** – 140 to 173 tests. The fuzz test gained an exact derivative-on-measurement check against the 128-bit reference model and now also runs its robustness, variable-vs-fixed-rate and reset checks with the mode switched on at random.
+* Usage guide updated.
 
 ### v1.0.0
 
@@ -560,7 +610,7 @@ Fixes for issues found while reviewing v0.2:
 
 ## Current Status
 
-The library files are included in this release (`src/`), and the 140-test suite passes on an ESP32.
+The library files are included in this release (`src/`), and the 173-test suite passes on an ESP32.
 
 FixedPID is also being validated in real-world use on my ESP32-based drone project. As with any control library, verify the behavior on your own hardware before relying on it.
 

@@ -32,7 +32,7 @@ This guide explains how to use FixedPID in a real project: the units, which upda
   lib_deps = https://github.com/citycafe578/FixedPID.git
   ```
 
-Then `#include "FixedPID.h"`. The library only needs `<stdint.h>` and a GCC or Clang compatible compiler (it uses `__builtin_add_overflow` / `__builtin_mul_overflow`). It does not use floating point, heap allocation or any Arduino API.
+Then `#include "FixedPID.h"`. The library only needs `<stdint.h>` and a GCC or Clang compatible compiler (it uses `__builtin_add_overflow` / `__builtin_mul_overflow`). The update functions use no floating point, heap allocation or Arduino API (only the optional `setTuningsFloat()` setup helper converts floats).
 
 FixedPID targets 32-bit MCUs. It has been tested on the ESP32. 8-bit AVR boards are not a target platform.
 
@@ -101,6 +101,8 @@ Worked checks:
 
 Gains below `0.001` cannot be represented. If you need a very small gain, scale your error or output units instead.
 
+In `setup()` you can also write the gains as plain numbers: `setTuningsFloat(1.5f, 0.2f, 0.05f)` (see [Settings reference](#5-settings-reference)).
+
 ## 4. Choosing an update function
 
 | Function | Use it when |
@@ -123,10 +125,12 @@ Defaults are what a freshly constructed `FixedPID` uses.
 | `setTunings(kp, ki, kd)` | `0, 0, 0` | Gains, each `real * 1000`. With all zeros the output is always `0`. |
 | `setOutputLimits(min, max)` | `INT32_MIN, INT32_MAX` | Clamps the returned output. If `min > max` the two are swapped. |
 | `setIntegralLimits(min, max)` | `INT32_MIN, INT32_MAX` | Clamps the **integral term's contribution to the output** (output units, not error units). Swapped if `min > max`. Position form only. |
+| `setTuningsFloat(kp, ki, kd)` | – | Same as `setTunings()` but takes plain numbers (`1.5f`), rounded to 0.001. Uses floating point only inside this call, so use it in `setup()`. Returns `false` if a gain is NaN (set to 0) or outside ±2,147,483.647 (saturated); the other gains are still applied. |
 | `setFrequency(hz)` | not set | Needed by the `*FixedRate` functions. Valid range 1 – 1,000,000 Hz. Returns `true` on success. |
 | `setErrorDeadband(edb)` | `0` | If `|error| <= edb` the error is treated as `0` (P, I and D all see zero). |
 | `setErrorIntegralThreshold(eit)` | `INT32_MAX` | The integral only accumulates while `|error| <= eit`. Outside it the integral is frozen (not reset). |
 | `setDerivativeFilter(alpha)` | `1000` (off) | Low-pass filter on the derivative term, `0 – 1000`. See [Derivative filter](#7-derivative-filter). |
+| `setDerivativeOnMeasurement(enable)` | `false` | `true`: the D term acts on `-d(input)/dt` instead of the error. See [Derivative filter](#7-derivative-filter). |
 | `reset()` | – | Clears every piece of internal state (integral, previous errors, velocity output, filter, remainders). Settings are kept. |
 
 Things to know:
@@ -170,7 +174,20 @@ filteredD = (alpha * rawD + (1000 - alpha) * previousFilteredD) / 1000
 
 **Lower `alpha` = more smoothing** (and more lag). Values above 1000 are treated as 1000. The filter only runs when `kd != 0`. In the velocity form it filters the change of the derivative term.
 
-The derivative acts on the *error*, so a sudden change of `target` produces a one-step spike in the D term (derivative kick). If your target changes in steps, either keep `kd` small, use the filter, or feed `update()` a target that you ramp yourself.
+### Derivative on measurement
+
+By default the derivative acts on the *error*, so a sudden change of `target` produces a one-step spike in the D term (derivative kick). If your target changes in steps, switch it to the measurement:
+
+```cpp
+pid.setDerivativeOnMeasurement(true);   // D = -Kd * d(input)/dt
+```
+
+A setpoint step then causes no kick, and with a constant `target` the output is identical to the default. Details:
+
+* Works with all four update functions. In the velocity form only D moves to the measurement; P and I stay on the error.
+* The first update after switching it on (or after `reset()`) only records the input, so the initial input value does not cause a kick.
+* The error deadband does not apply to D in this mode, because D sees the raw measurement. Use the derivative filter against sensor noise.
+* It can be switched at any time. You can also still keep `kd` small, use the filter, or ramp the target yourself.
 
 ## 8. Velocity form
 
@@ -181,7 +198,7 @@ Things that differ from the position form:
 * `setIntegralLimits()` is **not used**. The accumulator is limited only by `setOutputLimits()`, which also acts as the anti-windup.
 * After `reset()` (and after construction) the accumulator starts at `0`. There is no way to preload it with the actuator's current value yet.
 * P, I and D contributions are fractions of an output unit per step. The remainder is carried to the next call, so slow, small changes are not lost to rounding.
-* The D term works on the second difference of the error. A step in `target` still produces a spike.
+* The D term works on the second difference of the error, so a step in `target` produces a spike. `setDerivativeOnMeasurement(true)` moves D to the measurement and avoids it.
 
 Use it for actuators that integrate your command (valves moved by increments, stepper-style positioners). For everything else the position form is simpler.
 
@@ -307,13 +324,14 @@ Remember the stored gains are `real * 1000`: a gain change of `1` in the stored 
 | Output sticks at a limit | The output limit is reached and the error keeps the same sign; check units and gain scale (remember the `* 1000`). |
 | Slow creep or overshoot after a long saturation | Set `setIntegralLimits()` (position form) and make sure output limits match the actuator. |
 | Jump when the loop is re-enabled | Call `reset()` when you restart the loop. |
+| Output spikes when the target changes | Derivative kick. Call `setDerivativeOnMeasurement(true)`, or use the filter / a ramped target. |
 | Noisy output | Lower the derivative filter `alpha`, add a deadband, or lower `kd`. |
 | Result is much smaller than expected | The stored gains are `real * 1000`; `ki` is per second and `dt_us` is in microseconds. |
 | Fixed-rate output differs slightly from `update()` | Only at rates that do not divide 1,000,000 evenly; the fixed-rate version is the more exact one. |
 
 ## 13. Using it from interrupts and tasks
 
-* The library uses no heap, no floating point and no blocking calls; each call takes a few microseconds on a 32-bit MCU (the exact time depends on the chip).
+* The library uses no heap, no floating point (in the update functions) and no blocking calls; each call takes a few microseconds on a 32-bit MCU (the exact time depends on the chip).
 * An instance is not reentrant and not thread-safe. Call it from one context only, or protect it with a lock/critical section. Never share one instance between an ISR and a task without protection.
 * `reset()` and the setters change the same state as the update functions; call them from the same context as `update`.
 
@@ -329,6 +347,6 @@ make fuzz SCALE=20 # a longer fuzz run
 ```
 
 * `test/test.cpp` is the unit test suite. It is the same file you can run on an ESP32 (Arduino framework) and prints a pass/fail summary and a benchmark on the serial port.
-* `test/host/fuzz_test.cpp` compares the first call of every update path with a 128-bit reference model, throws random extreme configurations at all four update functions, checks that variable-dt and fixed-rate agree, and that `reset()` restores a fresh state.
+* `test/host/fuzz_test.cpp` compares the first call of every update path with a 128-bit reference model, throws random extreme configurations at all four update functions, checks the derivative-on-measurement mode against the reference model, that variable-dt and fixed-rate agree, and that `reset()` restores a fresh state.
 
 The same checks run in GitHub Actions on every push (`.github/workflows/ci.yml`).

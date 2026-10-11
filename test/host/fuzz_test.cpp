@@ -5,6 +5,9 @@
 //                 limits and the sanitizers see no overflow / UB
 //   3. identical: variable-dt and fixed-rate paths agree at divisible rates
 //   4. reset:     reset() makes an instance behave like a fresh one
+//   5. exactDoM:  derivative-on-measurement: first call has no D, second call
+//                 vs. the 128-bit reference model (all four paths)
+//   Checks 2-4 also run with derivative-on-measurement switched on at random.
 //
 // usage: fuzz_test [scale] [seed]     (scale 1 ~ a few seconds)
 #include <stdint.h>
@@ -176,6 +179,44 @@ static void testExact(long n) {
     }
 }
 
+// ---- derivative on measurement: exact second call, no D on the first ----------
+
+static void testExactDoM(long n) {
+    for (long i = 0; i < n; i++) {
+        Cfg c;
+        randomCfg(c, false);
+        c.kp = 0; c.ki = 0;                       // only the derivative term
+        int32_t t1 = pick32(), in1 = pick32(), t2 = pick32(), in2 = pick32();
+        uint32_t dt = pickDt(), hz = pickHz();
+        Cfg none = c; none.kd = 0;
+
+        for (int path = 0; path < 4; path++) {
+            FixedPID p; apply(p, c); p.setFrequency(hz);
+            p.setDerivativeOnMeasurement(true);
+            bool fixed = path == 1 || path == 3, vel = path >= 2;
+            int32_t first  = path == 0 ? p.update(t1, in1, dt) : path == 1 ? p.updateFixedRate(t1, in1)
+                           : path == 2 ? p.updateVelocity(t1, in1, dt) : p.updateVelocityFixedRate(t1, in1);
+            int32_t second = path == 0 ? p.update(t2, in2, dt) : path == 1 ? p.updateFixedRate(t2, in2)
+                           : path == 2 ? p.updateVelocity(t2, in2, dt) : p.updateVelocityFixedRate(t2, in2);
+            // first call: no derivative at all. second call: D of the input change, e = in1 - in2
+            int32_t want1 = vel ? refVelocity(none, t1, in1, dt, fixed, hz) : refPosition(none, t1, in1, dt, fixed, hz);
+            int32_t want2;
+            if (vel) {   // velocity form accumulates onto the (clamped) output of the first call
+                i128 e = (i128)in1 - in2;
+                i128 dD = c.kd == 0 ? 0 : (fixed ? e * ((i128)c.kd * hz) / 1000 : (i128)c.kd * e * 1000 / dt);
+                want2 = (int32_t)clampI((i128)first + dD, c.outMin, c.outMax);
+            } else {
+                want2 = refPosition(c, in1, in2, dt, fixed, hz);   // e = in1 - in2 gives the same D
+            }
+            (void)t2;
+            CHECK(first == clampI(0, c.outMin, c.outMax) && want1 == first,
+                  "DoM first call path=%d kd=%d got=%d", path, c.kd, first);
+            CHECK(second == want2, "DoM second path=%d kd=%d in1=%d in2=%d dt=%u hz=%u got=%d want=%d",
+                  path, c.kd, in1, in2, dt, hz, second, want2);
+        }
+    }
+}
+
 // ---- robustness: anything goes, outputs stay in the limits, no UB ----------
 
 static void testRobust(long sequences) {
@@ -193,6 +234,8 @@ static void testRobust(long sequences) {
             all[k]->setErrorIntegralThreshold(pick32());
             all[k]->setDerivativeFilter((uint32_t)(rnd() % 1100));
         }
+        bool dom = rnd() % 2;
+        for (int k = 0; k < 4; k++) all[k]->setDerivativeOnMeasurement(dom);
 
         for (int step = 0; step < 40; step++) {
             int32_t t = pick32(), in = pick32();
@@ -206,6 +249,7 @@ static void testRobust(long sequences) {
             }
             CHECK(a.update(t, in, 0) == 0, "dt=0 must return 0");
             if (rnd() % 17 == 0) { for (int k = 0; k < 4; k++) all[k]->reset(); }
+            if (rnd() % 13 == 0) { dom = !dom; for (int k = 0; k < 4; k++) all[k]->setDerivativeOnMeasurement(dom); }
         }
     }
 }
@@ -234,6 +278,8 @@ static void testIdentical(long sequences) {
             all[k]->setErrorIntegralThreshold(thr);
             all[k]->setDerivativeFilter(alpha);
         }
+        bool dom = rnd() % 2;
+        for (int k = 0; k < 4; k++) all[k]->setDerivativeOnMeasurement(dom);
         for (int step = 0; step < 100; step++) {
             int32_t t = (int32_t)(rnd() % 2000001) - 1000000;
             int32_t in = (int32_t)(rnd() % 2000001) - 1000000;
@@ -255,7 +301,9 @@ static void testReset(long sequences) {
 
         FixedPID used, fresh;
         FixedPID* both[2] = {&used, &fresh};
+        bool dom = rnd() % 2;
         for (int k = 0; k < 2; k++) {
+            both[k]->setDerivativeOnMeasurement(dom);
             apply(*both[k], c);
             both[k]->setFrequency(hz);
             both[k]->setDerivativeFilter(alpha);
@@ -288,6 +336,7 @@ int main(int argc, char** argv) {
     if (argc > 2) rngState ^= (uint64_t)atoll(argv[2]) * 0x9E3779B97F4A7C15ULL;
 
     testExact(300000 * scale);
+    testExactDoM(100000 * scale);
     testRobust(30000 * scale);
     testIdentical(4000 * scale);
     testReset(20000 * scale);

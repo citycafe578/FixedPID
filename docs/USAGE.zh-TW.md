@@ -32,7 +32,7 @@
   lib_deps = https://github.com/citycafe578/FixedPID.git
   ```
 
-然後 `#include "FixedPID.h"`。函式庫只需要 `<stdint.h>` 和相容 GCC 或 Clang 的編譯器（使用 `__builtin_add_overflow` / `__builtin_mul_overflow`）。它不使用浮點數、動態記憶體，也不依賴任何 Arduino API。
+然後 `#include "FixedPID.h"`。函式庫只需要 `<stdint.h>` 和相容 GCC 或 Clang 的編譯器（使用 `__builtin_add_overflow` / `__builtin_mul_overflow`）。更新函式不使用浮點數、動態記憶體，也不依賴任何 Arduino API（只有可選的 `setTuningsFloat()` 設定輔助函式會做浮點轉換）。
 
 FixedPID 以 32 位元 MCU 為目標，已在 ESP32 上測試；8 位元 AVR 板不是目標平台。
 
@@ -101,6 +101,8 @@ output = Kp * e  +  Ki * ∫e dt  +  Kd * de/dt
 
 小於 `0.001` 的增益無法表示。如果需要很小的增益，請改變誤差或輸出的單位。
 
+在 `setup()` 裡也可以直接用小數設定增益：`setTuningsFloat(1.5f, 0.2f, 0.05f)`（見[設定總表](#5-設定總表)）。
+
 ## 4. 選擇更新函式
 
 | 函式 | 使用時機 |
@@ -123,10 +125,12 @@ output = Kp * e  +  Ki * ∫e dt  +  Kd * de/dt
 | `setTunings(kp, ki, kd)` | `0, 0, 0` | 增益，各為 `實際值 * 1000`。全為 0 時輸出恆為 `0`。 |
 | `setOutputLimits(min, max)` | `INT32_MIN, INT32_MAX` | 限制回傳的輸出。若 `min > max` 會自動對調。 |
 | `setIntegralLimits(min, max)` | `INT32_MIN, INT32_MAX` | 限制**積分項對輸出的貢獻**（單位是輸出，不是誤差）。`min > max` 時自動對調。僅位置型使用。 |
+| `setTuningsFloat(kp, ki, kd)` | – | 與 `setTunings()` 相同，但接受小數（`1.5f`），四捨五入到 0.001。只有這個函式內部用到浮點，請在 `setup()` 使用。增益為 NaN（設為 0）或超出 ±2,147,483.647（飽和）時回傳 `false`；其他增益仍會套用。 |
 | `setFrequency(hz)` | 未設定 | `*FixedRate` 函式需要。有效範圍 1 – 1,000,000 Hz，成功時回傳 `true`。 |
 | `setErrorDeadband(edb)` | `0` | 若 `|error| <= edb`，誤差視為 `0`（P、I、D 都看到 0）。 |
 | `setErrorIntegralThreshold(eit)` | `INT32_MAX` | 只有 `|error| <= eit` 時積分才會累積；超出範圍時積分凍結（不會歸零）。 |
 | `setDerivativeFilter(alpha)` | `1000`（關閉） | 對微分項做低通濾波，`0 – 1000`。見[微分濾波](#7-微分濾波)。 |
+| `setDerivativeOnMeasurement(enable)` | `false` | `true`：D 項改為作用在 `-d(input)/dt`，而不是誤差。見[微分濾波](#7-微分濾波)。 |
 | `reset()` | – | 清除所有內部狀態（積分、前次誤差、速度型輸出、濾波器、餘數）。設定值保留。 |
 
 注意事項：
@@ -170,7 +174,20 @@ filteredD = (alpha * rawD + (1000 - alpha) * previousFilteredD) / 1000
 
 **`alpha` 越低，平滑越強**（延遲也越大）。大於 1000 的值視為 1000。只有 `kd != 0` 時濾波器才會運作。速度型中，濾波的對象是微分項的增量。
 
-微分作用在**誤差**上，所以 `target` 突然改變時，D 項會出現一個單步尖峰（derivative kick）。如果你的目標是階躍式變化，可以把 `kd` 設小一點、使用濾波，或自己先把目標做成斜坡再傳給 `update()`。
+### 測量值微分
+
+預設情況下微分作用在**誤差**上，所以 `target` 突然改變時，D 項會出現一個單步尖峰（derivative kick）。如果你的目標是階躍式變化，可以改成作用在測量值上：
+
+```cpp
+pid.setDerivativeOnMeasurement(true);   // D = -Kd * d(input)/dt
+```
+
+設定點階躍就不會再產生突波；`target` 固定不變時，輸出與預設完全相同。細節：
+
+* 四個更新函式都適用。速度型只有 D 項改成作用在測量值，P 與 I 仍作用在誤差上。
+* 開啟後（或 `reset()` 之後）的第一次更新只會記錄輸入值，所以初始輸入值不會造成突波。
+* 在這個模式下誤差死區不會套用在 D 項上，因為 D 看的是原始測量值。要抑制感測器雜訊請用微分濾波。
+* 可以隨時切換。你也仍然可以把 `kd` 設小一點、使用濾波，或自己先把目標做成斜坡。
 
 ## 8. 速度型
 
@@ -181,7 +198,7 @@ filteredD = (alpha * rawD + (1000 - alpha) * previousFilteredD) / 1000
 * **不使用** `setIntegralLimits()`。累加器只受 `setOutputLimits()` 限制，它同時也扮演抗積分飽和的角色。
 * `reset()` 之後（以及剛建構時）累加器從 `0` 開始，目前無法用致動器現有的值預先載入。
 * P、I、D 每一步的貢獻是「不足一個輸出單位」的小數，餘數會帶到下一次呼叫，所以緩慢而微小的變化不會因四捨五入而消失。
-* D 項使用誤差的二階差分，`target` 階躍時仍會出現尖峰。
+* D 項使用誤差的二階差分，所以 `target` 階躍時會出現尖峰。`setDerivativeOnMeasurement(true)` 會把 D 項改成作用在測量值，避免這個問題。
 
 適用於會對命令做積分的致動器（以增量移動的閥門、步進式定位器等）。其他情況用位置型比較簡單。
 
@@ -307,13 +324,14 @@ void onEnable() {
 | 輸出卡在限幅 | 已達輸出限幅且誤差方向不變；請檢查單位與增益縮放（別忘了 `* 1000`）。 |
 | 長時間飽和後出現緩慢漂移或過衝 | 設定 `setIntegralLimits()`（位置型），並讓輸出限幅符合致動器。 |
 | 重新啟用迴圈時輸出跳動 | 重新啟動迴圈時呼叫 `reset()`。 |
+| `target` 改變時輸出出現尖峰 | 微分突波。呼叫 `setDerivativeOnMeasurement(true)`，或使用濾波／斜坡目標。 |
 | 輸出雜訊大 | 降低微分濾波的 `alpha`、加死區，或降低 `kd`。 |
 | 結果比預期小很多 | 儲存的增益是 `實際值 * 1000`；`ki` 是每秒、`dt_us` 是微秒。 |
 | 固定頻率的輸出和 `update()` 略有差異 | 只會發生在不能整除 1,000,000 的頻率；固定頻率版本較精確。 |
 
 ## 13. 在中斷與多工中使用
 
-* 函式庫不用動態記憶體、不用浮點數、也沒有阻塞呼叫；在 32 位元 MCU 上，每次呼叫約為數微秒（實際時間依晶片而定）。
+* 函式庫不用動態記憶體、（更新函式中）不用浮點數、也沒有阻塞呼叫；在 32 位元 MCU 上，每次呼叫約為數微秒（實際時間依晶片而定）。
 * 實例不可重入、也不是執行緒安全的。只從單一情境呼叫，或用鎖／臨界區保護。不要在沒有保護的情況下讓 ISR 與任務共用同一個實例。
 * `reset()` 與各個設定函式會改變和更新函式相同的狀態，請從與 `update` 相同的情境呼叫。
 
@@ -329,6 +347,6 @@ make fuzz SCALE=20 # 較長時間的模糊測試
 ```
 
 * `test/test.cpp` 是單元測試套件，同一個檔案也能在 ESP32（Arduino 框架）上執行，並在序列埠印出通過／失敗摘要與跑分。
-* `test/host/fuzz_test.cpp` 會把每條更新路徑的第一次呼叫與 128 位元參考模型比對、對四個更新函式丟入隨機的極端設定、檢查可變 dt 與固定頻率是否一致，並確認 `reset()` 能還原成全新狀態。
+* `test/host/fuzz_test.cpp` 會把每條更新路徑的第一次呼叫與 128 位元參考模型比對、對四個更新函式丟入隨機的極端設定、比對測量值微分模式與參考模型、檢查可變 dt 與固定頻率是否一致，並確認 `reset()` 能還原成全新狀態。
 
 相同的檢查會在每次 push 時於 GitHub Actions 執行（`.github/workflows/ci.yml`）。

@@ -191,6 +191,10 @@ FixedPID::FixedPID(){
     alpha = PID_SCALE;
 
     previousError = 0;
+    derivativeOnMeasurement = false;
+    hasInput = false;
+    previousInput = 0;
+    previousPreviousInput = 0;
     integral = 0;
     previousPreviousError = 0;
     velocityOutput = 0;
@@ -211,6 +215,53 @@ void FixedPID::setTunings(int32_t kp, int32_t ki, int32_t kd){
     if(hz != 0){
         derivativeScale = (int64_t)kd * (int64_t)hz;
     }
+}
+
+namespace {
+
+int32_t gainFromFloat(float g, bool& ok){
+    if(g != g){
+        ok = false;
+        return 0;
+    }
+    double x = (double)g * (double)PID_SCALE;
+    if(x >= 2147483647.0){
+        ok = (x == 2147483647.0);
+        return INT32_MAX;
+    }
+    if(x <= -2147483648.0){
+        ok = (x == -2147483648.0);
+        return INT32_MIN;
+    }
+    return (int32_t)(x >= 0.0 ? x + 0.5 : x - 0.5);
+}
+
+}
+
+bool FixedPID::setTuningsFloat(float kp, float ki, float kd){
+    bool ok = true;
+    int32_t ikp = gainFromFloat(kp, ok);
+    int32_t iki = gainFromFloat(ki, ok);
+    int32_t ikd = gainFromFloat(kd, ok);
+    setTunings(ikp, iki, ikd);
+    return ok;
+}
+
+void FixedPID::setDerivativeOnMeasurement(bool enable){
+    derivativeOnMeasurement = enable;
+    hasInput = false;
+}
+
+void FixedPID::measurementChange(int64_t input, int64_t& change, int64_t& secondChange){
+    if(!hasInput){
+        previousInput = input;
+        previousPreviousInput = input;
+        hasInput = true;
+    }
+    change = previousInput - input;                                  // 33-bit, fits
+    secondChange = change + (previousInput - previousPreviousInput);
+    previousPreviousInput = previousInput;
+    previousInput = input;
 }
 
 void FixedPID::setOutputLimits(int32_t min, int32_t max){
@@ -291,6 +342,9 @@ bool FixedPID::withinIntegralThreshold(int64_t error) const{
 }
 
 void FixedPID::reset(){
+    hasInput = false;
+    previousInput = 0;
+    previousPreviousInput = 0;
     integral = 0;
     previousError = 0;
     previousPreviousError = 0;
@@ -303,16 +357,12 @@ void FixedPID::reset(){
     velocityDFraction = 0;
 }
 
-// Shared tail of the position-form paths: I clamp (state is clamped too, so it
-// cannot wind up behind the limit), anti-windup, output clamp.
 int32_t FixedPID::finishPosition(int64_t error, int64_t newIntegral, int64_t newIntegralFrac, int64_t D){
     // |kp| <= 2^31 and |error| < 2^32, so this product always fits in int64.
     int64_t P = div1000((int64_t)kp * error);
     int64_t I = 0;
 
     if(ki != 0){
-        // The integral is a large int64 after a while; compare against a limit that
-        // setTunings() precomputed instead of running the overflow-checked multiply.
         int64_t prod = (newIntegral < integralMulLimit && newIntegral > -integralMulLimit)
                            ? (int64_t)ki * newIntegral
                            : satMul((int64_t)ki, newIntegral);
@@ -362,9 +412,15 @@ int32_t FixedPID::update(int32_t target, int32_t input, uint32_t dt_us){
         newIntegral = satAdd(newIntegral, satMul(error, (int64_t)dt_us));
     }
 
+    int64_t errorChange = error - previousError;
+    if(derivativeOnMeasurement){
+        int64_t unused;
+        measurementChange((int64_t)input, errorChange, unused);
+    }
+
     int64_t D = 0;
     if(kd != 0){
-        D = mulDiv1000(satMul((int64_t)kd, error - previousError), (int64_t)dt_us);
+        D = mulDiv1000(satMul((int64_t)kd, errorChange), (int64_t)dt_us);
         D = filterDerivative(D);
     }
 
@@ -394,9 +450,15 @@ int32_t FixedPID::updateFixedRate(int32_t target, int32_t input){
         newIntegral = satAdd(newIntegral, inc);
     }
 
+    int64_t errorChange = error - previousError;
+    if(derivativeOnMeasurement){
+        int64_t unused;
+        measurementChange((int64_t)input, errorChange, unused);
+    }
+
     int64_t D = 0;
     if(kd != 0){
-        D = div1000(satMul(error - previousError, derivativeScale));
+        D = div1000(satMul(errorChange, derivativeScale));
         D = filterDerivative(D);
     }
 
@@ -411,6 +473,10 @@ int32_t FixedPID::updateVelocity(int32_t target, int32_t input, uint32_t dt_us){
     int64_t error = applyDeadband((int64_t)target - (int64_t)input);
     int64_t errorChange = error - previousError;
     int64_t secondErrorChange = error - 2 * previousError + previousPreviousError;
+    if(derivativeOnMeasurement){
+        int64_t unused;
+        measurementChange((int64_t)input, unused, secondErrorChange);   // D only; P stays on the error
+    }
 
     int64_t deltaP = divCarry(satMul((int64_t)kp, errorChange), PID_SCALE, velocityPRemainder);
 
@@ -438,6 +504,10 @@ int32_t FixedPID::updateVelocityFixedRate(int32_t target, int32_t input){
     int64_t error = applyDeadband((int64_t)target - (int64_t)input);
     int64_t errorChange = error - previousError;
     int64_t secondErrorChange = error - 2 * previousError + previousPreviousError;
+    if(derivativeOnMeasurement){
+        int64_t unused;
+        measurementChange((int64_t)input, unused, secondErrorChange);   // D only; P stays on the error
+    }
 
     int64_t deltaP = divCarry(satMul((int64_t)kp, errorChange), PID_SCALE, velocityPRemainder);
 

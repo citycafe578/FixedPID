@@ -1422,6 +1422,127 @@ void testFixedRateTimeBase() {
   }
 }
 
+// ========================================================
+// DERIVATIVE ON MEASUREMENT
+// ========================================================
+
+void testDerivativeOnMeasurement() {
+  // Default: D acts on the error, a setpoint step kicks (kd = 1.0, dt = 1 ms -> 1000 x change)
+  FixedPID pid;
+  pid.setTunings(0, 0, 1000);
+  pid.update(0, 0, 1000);
+  testResult("DoM off: setpoint step kicks", 100000, pid.update(100, 0, 1000));
+
+  // On: constant input -> no D at all, a changing input gives -d(input)/dt
+  FixedPID dom;
+  dom.setTunings(0, 0, 1000);
+  dom.setDerivativeOnMeasurement(true);
+  testResult("DoM on: first update", 0, dom.update(0, 0, 1000));
+  testResult("DoM on: setpoint step, no kick", 0, dom.update(100, 0, 1000));
+  testResult("DoM on: input rises", -10000, dom.update(100, 10, 1000));
+  testResult("DoM on: input holds", 0, dom.update(100, 10, 1000));
+
+  // First update after enabling / reset only records the input (no kick from input != 0)
+  FixedPID first;
+  first.setTunings(0, 0, 1000);
+  first.setDerivativeOnMeasurement(true);
+  testResult("DoM on: first update with non-zero input", 0, first.update(0, 500, 1000));
+  testResult("DoM on: second update", -1000 * 100, first.update(0, 600, 1000));
+  first.reset();
+  testResult("DoM on: after reset", 0, first.update(0, 300, 1000));
+
+  // Same result as the error derivative when the setpoint is constant
+  FixedPID a, b;
+  a.setTunings(0, 0, 1000);
+  b.setTunings(0, 0, 1000);
+  b.setDerivativeOnMeasurement(true);
+  a.update(0, 0, 1000);
+  b.update(0, 0, 1000);
+  testResult("DoM == error D, constant setpoint #1", a.update(0, 10, 1000), b.update(0, 10, 1000));
+  testResult("DoM == error D, constant setpoint #2", a.update(0, 30, 1000), b.update(0, 30, 1000));
+
+  // Switching it off again restores the default behavior
+  dom.setDerivativeOnMeasurement(false);
+  dom.reset();
+  dom.update(0, 0, 1000);
+  testResult("DoM switched off: kick is back", 100000, dom.update(100, 0, 1000));
+
+  // Fixed-rate path
+  FixedPID fr;
+  fr.setTunings(0, 0, 1000);
+  fr.setFrequency(1000);
+  fr.setDerivativeOnMeasurement(true);
+  fr.updateFixedRate(0, 0);
+  testResult("DoM fixed-rate: setpoint step, no kick", 0, fr.updateFixedRate(100, 0));
+  testResult("DoM fixed-rate: input rises", -10000, fr.updateFixedRate(100, 10));
+
+  // Velocity form: only D moves to the measurement, P stays on the error
+  FixedPID vel;
+  vel.setTunings(0, 0, 1000);
+  vel.setDerivativeOnMeasurement(true);
+  testResult("DoM velocity: first", 0, vel.updateVelocity(100, 0, 1000));
+  testResult("DoM velocity: no kick", 0, vel.updateVelocity(100, 0, 1000));
+  testResult("DoM velocity: input rises", -10000, vel.updateVelocity(100, 10, 1000));
+  testResult("DoM velocity: input holds", 0, vel.updateVelocity(100, 10, 1000));
+
+  FixedPID velErr;
+  velErr.setTunings(0, 0, 1000);
+  velErr.updateVelocity(0, 0, 1000);
+  testResult("DoM velocity off: kick", 100000, velErr.updateVelocity(100, 0, 1000));
+
+  FixedPID velP;
+  velP.setTunings(1000, 0, 1000);
+  velP.setDerivativeOnMeasurement(true);
+  testResult("DoM velocity: P stays on the error", 100, velP.updateVelocity(100, 0, 1000));
+
+  FixedPID velFr;
+  velFr.setTunings(0, 0, 1000);
+  velFr.setFrequency(1000);
+  velFr.setDerivativeOnMeasurement(true);
+  velFr.updateVelocityFixedRate(0, 0);
+  testResult("DoM velocity fixed-rate: no kick", 0, velFr.updateVelocityFixedRate(100, 0));
+  testResult("DoM velocity fixed-rate: input rises", -10000, velFr.updateVelocityFixedRate(100, 10));
+}
+
+// ========================================================
+// setTuningsFloat
+// ========================================================
+
+void testSetTuningsFloat() {
+  FixedPID a, b;
+  testBool("setTuningsFloat valid returns true", a.setTuningsFloat(1.5f, 0.2f, 0.05f));
+  b.setTunings(1500, 200, 50);
+  a.update(1000, 950, 1000);
+  b.update(1000, 950, 1000);
+  testResult("setTuningsFloat == setTunings", b.update(1000, 950, 1000), a.update(1000, 950, 1000));
+
+  FixedPID neg;
+  neg.setTuningsFloat(-1.2f, 0.0f, 0.0f);
+  testResult("setTuningsFloat negative gain", -120, neg.update(100, 0, 1000));
+
+  FixedPID rounded;
+  rounded.setTuningsFloat(0.0004f, 0.0f, 0.0f);      // < 0.0005 rounds to 0
+  testResult("setTuningsFloat rounds to nearest", 0, rounded.update(1000000, 0, 1000));
+
+  FixedPID nan;
+  testBool("setTuningsFloat NaN returns false", !nan.setTuningsFloat(__builtin_nanf(""), 0.0f, 0.0f));
+  testResult("setTuningsFloat NaN gain is 0", 0, nan.update(100, 0, 1000));
+
+  FixedPID big;
+  big.setOutputLimits(-1000, 1000);
+  testBool("setTuningsFloat too large returns false", !big.setTuningsFloat(3.0e6f, 0.0f, 0.0f));
+  testResult("setTuningsFloat saturates high", 1000, big.update(1, 0, 1000));
+
+  FixedPID small;
+  small.setOutputLimits(-1000, 1000);
+  testBool("setTuningsFloat too small returns false", !small.setTuningsFloat(-3.0e6f, 0.0f, 0.0f));
+  testResult("setTuningsFloat saturates low", 1000, small.update(-1, 0, 1000));
+
+  FixedPID other;
+  testBool("setTuningsFloat bad ki, other gains still set", !other.setTuningsFloat(2.0f, __builtin_nanf(""), 0.0f));
+  testResult("setTuningsFloat keeps the other gains", 2000, other.update(1000, 0, 1000));
+}
+
 void testSetFrequencyResult() {
   FixedPID pid;
   testBool("setFrequency valid returns true", pid.setFrequency(1000));
@@ -1854,6 +1975,8 @@ void setup() {
   testSetFrequencyResult();
   testLimitOrder();
   testRangeProtection();
+  testDerivativeOnMeasurement();
+  testSetTuningsFloat();
 
   Serial.println();
   Serial.println("========================================");

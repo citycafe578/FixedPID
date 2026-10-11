@@ -21,6 +21,7 @@ class FixedPID{
         FixedPID();
 
         void setTunings(int32_t kp, int32_t ki, int32_t kd);
+        bool setTuningsFloat(float kp, float ki, float kd);
         void setOutputLimits(int32_t min, int32_t max);
         void setIntegralLimits(int32_t min, int32_t max);
 
@@ -30,6 +31,7 @@ class FixedPID{
         void setErrorDeadband(uint32_t edb);
         void setErrorIntegralThreshold(int32_t eit);
         void setDerivativeFilter(uint32_t alpha);
+        void setDerivativeOnMeasurement(bool enable);
         void reset();
 
         int32_t update(int32_t target, int32_t input, uint32_t dt_us);
@@ -41,6 +43,10 @@ class FixedPID{
         int32_t kp, ki, kd;
 
         int64_t previousError;
+        bool derivativeOnMeasurement;
+        bool hasInput;
+        int64_t previousInput;
+        int64_t previousPreviousInput;
         int64_t integral;
 
         int32_t outputMin, outputMax;
@@ -58,6 +64,7 @@ class FixedPID{
 
         int64_t filterDerivative(int64_t rawD);
         int64_t applyDeadband(int64_t error) const;
+        void measurementChange(int64_t input, int64_t& change, int64_t& secondChange);
         bool withinIntegralThreshold(int64_t error) const;
         int32_t finishPosition(int64_t error, int64_t newIntegral, int64_t newIntegralFrac, int64_t D);
         int32_t finishVelocity(int64_t error, int64_t deltaP, int64_t deltaI, int64_t deltaD);
