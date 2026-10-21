@@ -503,6 +503,8 @@ FixedPID 也正在我的 **ESP32 無人機專案**上進行實際驗證。和任
 
 FixedPID 以現代 32 位元 MCU 為主要目標，已在 ESP32 上測試；Arduino UNO 等 8 位元 AVR 板並非目標平台，也尚未測試。
 
+FixedPID 也已列入 [XERJ Corpus Hub](https://hub.xerj.org/contributors/citycafe578)（xerj.org）——一個給 AI 程式碼代理使用的開放程式碼範例索引。
+
 ---
 
 ## 授權

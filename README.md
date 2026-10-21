@@ -616,6 +616,8 @@ FixedPID is also being validated in real-world use on my ESP32-based drone proje
 
 FixedPID targets modern 32-bit MCUs. It has been tested on the ESP32; 8-bit AVR boards such as the Arduino UNO are not a target platform and have not been tested.
 
+FixedPID is also listed in the [XERJ Corpus Hub](https://hub.xerj.org/contributors/citycafe578) (xerj.org), an open index of code solutions for AI coding agents.
+
 ---
 
 ## License
